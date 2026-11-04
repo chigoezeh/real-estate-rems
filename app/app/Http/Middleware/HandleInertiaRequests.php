@@ -33,6 +33,7 @@ class HandleInertiaRequests extends Middleware
             ...parent::share($request),
             'auth' => [
                 'user' => $request->user(),
+                'canManageUsers' => $request->user()?->hasPermission('users.manage') ?? false,
             ],
             'company' => fn (): ?array => $request->user()?->organizations()
                 ->first(['organizations.id', 'organizations.name'])

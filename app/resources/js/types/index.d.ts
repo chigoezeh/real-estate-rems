@@ -15,6 +15,7 @@ export type PageProps<
 > = T & {
     auth: {
         user: User;
+        canManageUsers: boolean;
     };
     company: CompanySummary | null;
 };
