@@ -34,6 +34,9 @@ class HandleInertiaRequests extends Middleware
             'auth' => [
                 'user' => $request->user(),
             ],
+            'company' => fn (): ?array => $request->user()?->organizations()
+                ->first(['organizations.id', 'organizations.name'])
+                ?->only(['id', 'name']),
         ];
     }
 }

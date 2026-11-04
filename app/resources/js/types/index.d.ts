@@ -1,8 +1,13 @@
 export interface User {
-    id: number;
+    id: string;
     name: string;
     email: string;
     email_verified_at?: string;
+}
+
+export interface CompanySummary {
+    id: string;
+    name: string;
 }
 
 export type PageProps<
@@ -11,4 +16,5 @@ export type PageProps<
     auth: {
         user: User;
     };
+    company: CompanySummary | null;
 };

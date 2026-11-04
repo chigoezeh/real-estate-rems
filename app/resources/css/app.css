@@ -1,3 +1,27 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+	body {
+		@apply bg-[#f3f5ef] font-sans text-[#18342c] antialiased;
+	}
+}
+
+@layer components {
+	.eyebrow {
+		@apply text-[11px] font-semibold uppercase tracking-[0.16em] text-[#718078];
+	}
+
+	.page-title {
+		@apply mt-2 font-display text-3xl leading-tight text-[#18342c] sm:text-4xl;
+	}
+
+	.field-label {
+		@apply mb-2 block text-sm font-medium text-[#354f45];
+	}
+
+	.field-input {
+		@apply block min-h-11 w-full rounded-lg border border-[#d6dfd7] bg-white px-3.5 py-2.5 text-sm text-[#18342c] shadow-sm outline-none transition placeholder:text-[#9aa69f] focus:border-[#638373] focus:ring-2 focus:ring-[#d9e7d8];
+	}
+}
