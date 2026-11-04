@@ -11,7 +11,7 @@ type Activity = {
 };
 
 type Props = PageProps & {
-    company: { name: string; currency: string; timezone: string } | null;
+    company: { name: string; country: string; currency: string; timezone: string } | null;
     organizationCount: number;
     staffCount: number;
     recentActivity: Activity[];
@@ -75,7 +75,7 @@ export default function Dashboard({ company, organizationCount, staffCount, rece
                         <p className="eyebrow">Company profile</p>
                         <h2 className="mt-2 font-display text-2xl text-[#18342c]">{company?.name ?? 'Workspace not configured'}</h2>
                         <dl className="mt-6 space-y-4 border-t border-[#d4dfd1] pt-5 text-sm">
-                            <div className="flex justify-between gap-4"><dt className="text-[#6b7b72]">Country</dt><dd className="font-medium text-[#29483e]">Nigeria</dd></div>
+                            <div className="flex justify-between gap-4"><dt className="text-[#6b7b72]">Country</dt><dd className="font-medium text-[#29483e]">{company?.country ?? '—'}</dd></div>
                             <div className="flex justify-between gap-4"><dt className="text-[#6b7b72]">Currency</dt><dd className="font-medium text-[#29483e]">{company?.currency ?? '—'}</dd></div>
                             <div className="flex justify-between gap-4"><dt className="text-[#6b7b72]">Time zone</dt><dd className="max-w-[65%] truncate text-right font-medium text-[#29483e]">{company?.timezone ?? '—'}</dd></div>
                         </dl>

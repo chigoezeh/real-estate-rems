@@ -25,6 +25,7 @@ Route::get('/dashboard', function () {
     return Inertia::render('Dashboard', [
         'company' => $organization ? [
             'name' => $organization->name,
+            'country' => $organization->country,
             'currency' => $organization->currency,
             'timezone' => $organization->timezone,
         ] : null,

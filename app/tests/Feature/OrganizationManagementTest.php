@@ -6,6 +6,7 @@ use App\Models\Organization;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
 class OrganizationManagementTest extends TestCase
@@ -51,6 +52,37 @@ class OrganizationManagementTest extends TestCase
         ])->assertNotFound();
 
         $this->assertDatabaseMissing('organizations', ['name' => 'Unauthorized Branch']);
+    }
+
+    public function test_owner_can_list_their_tree_without_unrelated_organizations(): void
+    {
+        $owner = $this->installOwner();
+        $root = $owner->organizations()->firstOrFail();
+
+        Organization::create([
+            'parent_id' => $root->id,
+            'name' => 'Northstar Abuja Branch',
+            'kind' => 'branch',
+            'country' => $root->country,
+            'currency' => $root->currency,
+            'timezone' => $root->timezone,
+            'locale' => $root->locale,
+        ]);
+        Organization::create([
+            'name' => 'Unrelated Realty',
+            'kind' => 'company',
+            'country' => 'NG',
+            'currency' => 'NGN',
+            'timezone' => 'Africa/Lagos',
+            'locale' => 'en',
+        ]);
+
+        $this->actingAs($owner)
+            ->get('/organizations')
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Organizations/Index')
+                ->has('organizations', 2)
+                ->where('canCreate', true));
     }
 
     public function test_user_without_organization_management_permission_is_forbidden(): void
