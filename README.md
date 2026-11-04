@@ -9,12 +9,13 @@ The Laravel application is in [`app/`](app/). The first implementation milestone
 - One-time company and administrator setup
 - UUID-backed users, organizations, roles, permissions, and audit records
 - Parent, subsidiary, and branch management with permission-scoped access
+- Organization profile, localization, and basic brand identity settings
 - Organization-scoped custom role management with editable permission assignments and protected system roles
 - Staff invitation, organization membership, role assignment, and access suspension
 - Login, a company-aware dashboard, and a responsive React/Inertia admin shell
 - MySQL as the default database connection
 
-Property inventory, CRM, payments, allocation, legal documents, and realtor workflows are planned next and are not implemented yet. The HTML files in the repository root are early sketches, not application entrypoints.
+Property inventory now supports project and unit setup, configurable title types, premium fields, and temporary reservations with locked status transitions. CRM, payments, allocation, legal documents, and realtor workflows remain planned. The HTML files in the repository root are early sketches, not application entrypoints.
 
 ## Requirements
 

@@ -33,6 +33,82 @@ class OrganizationManagementTest extends TestCase
         ]);
     }
 
+    public function test_owner_can_update_organization_profile_and_branding(): void
+    {
+        $owner = $this->installOwner();
+        $organization = $owner->organizations()->firstOrFail();
+
+        $this->actingAs($owner)->put(route('organizations.update', $organization, absolute: false), [
+            'name' => 'Northstar Realty Group',
+            'registration_number' => 'RC-402010',
+            'email' => 'office@example.test',
+            'phone' => '+234 800 123 4567',
+            'address' => '12 Marina Road, Lagos',
+            'country' => 'ng',
+            'currency' => 'ngn',
+            'timezone' => 'Africa/Lagos',
+            'locale' => 'en-NG',
+            'branding' => [
+                'display_name' => 'Northstar',
+                'primary_color' => '#17483a',
+                'accent_color' => '#d8ef75',
+            ],
+        ])->assertRedirect(route('organizations.index', absolute: false));
+
+        $this->assertDatabaseHas('organizations', [
+            'id' => $organization->id,
+            'name' => 'Northstar Realty Group',
+            'country' => 'NG',
+            'currency' => 'NGN',
+            'email' => 'office@example.test',
+        ]);
+        $this->assertSame('Northstar', $organization->fresh()->branding['display_name']);
+        $this->assertDatabaseHas('audit_logs', [
+            'organization_id' => $organization->id,
+            'action' => 'organization.updated',
+            'subject_id' => $organization->id,
+        ]);
+    }
+
+    public function test_owner_cannot_update_an_unrelated_organization(): void
+    {
+        $owner = $this->installOwner();
+        $unrelatedOrganization = Organization::create([
+            'name' => 'Unrelated Realty',
+            'kind' => 'company',
+            'country' => 'NG',
+            'currency' => 'NGN',
+            'timezone' => 'Africa/Lagos',
+            'locale' => 'en',
+        ]);
+
+        $this->actingAs($owner)->put(route('organizations.update', $unrelatedOrganization, absolute: false), [
+            'name' => 'Compromised Realty',
+            'country' => 'NG',
+            'currency' => 'NGN',
+            'timezone' => 'Africa/Lagos',
+            'locale' => 'en',
+            'branding' => ['primary_color' => '#17352d', 'accent_color' => '#d6f36a'],
+        ])->assertNotFound();
+
+        $this->assertDatabaseMissing('organizations', ['name' => 'Compromised Realty']);
+    }
+
+    public function test_owner_cannot_save_invalid_brand_colors(): void
+    {
+        $owner = $this->installOwner();
+        $organization = $owner->organizations()->firstOrFail();
+
+        $this->actingAs($owner)->put(route('organizations.update', $organization, absolute: false), [
+            'name' => $organization->name,
+            'country' => 'NG',
+            'currency' => 'NGN',
+            'timezone' => 'Africa/Lagos',
+            'locale' => 'en',
+            'branding' => ['primary_color' => 'green', 'accent_color' => '#d6f36a'],
+        ])->assertSessionHasErrors('branding.primary_color');
+    }
+
     public function test_owner_cannot_create_children_under_an_unrelated_organization(): void
     {
         $owner = $this->installOwner();

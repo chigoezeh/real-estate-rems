@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\OrganizationController;
+use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\RoleController;
 use App\Http\Controllers\SetupController;
@@ -48,8 +49,14 @@ Route::get('/dashboard', function () {
 })->middleware('auth')->name('dashboard');
 
 Route::middleware('auth')->group(function () {
+    Route::get('/inventory', [InventoryController::class, 'index'])->name('inventory.index');
+    Route::post('/projects', [InventoryController::class, 'storeProject'])->name('projects.store');
+    Route::post('/projects/{project}/units', [InventoryController::class, 'storeUnit'])->name('projects.units.store');
+    Route::post('/inventory/{propertyUnit}/reserve', [InventoryController::class, 'reserve'])->name('inventory.reserve');
+    Route::post('/inventory/{propertyUnit}/release', [InventoryController::class, 'release'])->name('inventory.release');
     Route::get('/organizations', [OrganizationController::class, 'index'])->name('organizations.index');
     Route::post('/organizations', [OrganizationController::class, 'store'])->name('organizations.store');
+    Route::put('/organizations/{organization}', [OrganizationController::class, 'update'])->name('organizations.update');
     Route::get('/access/roles', [RoleController::class, 'index'])->name('roles.index');
     Route::post('/access/roles', [RoleController::class, 'store'])->name('roles.store');
     Route::put('/access/roles/{role}', [RoleController::class, 'update'])->name('roles.update');

@@ -16,6 +16,7 @@ export type PageProps<
     auth: {
         user: User;
         canManageUsers: boolean;
+        canViewInventory: boolean;
     };
     company: CompanySummary | null;
 };

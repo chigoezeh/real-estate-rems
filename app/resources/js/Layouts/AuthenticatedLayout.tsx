@@ -1,5 +1,5 @@
 import { Link, usePage } from '@inertiajs/react';
-import { Building2, ChevronDown, KeyRound, LayoutDashboard, LogOut, Network, Users } from 'lucide-react';
+import { Building2, Boxes, ChevronDown, KeyRound, LayoutDashboard, LogOut, Network, Users } from 'lucide-react';
 import { PropsWithChildren, ReactNode } from 'react';
 import { PageProps } from '@/types';
 
@@ -10,7 +10,8 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
     const isOrganizations = route().current('organizations.*');
     const isRoles = route().current('roles.*');
     const isStaff = route().current('staff.*');
-    const sectionName = isDashboard ? 'Overview' : isRoles ? 'Access & roles' : isStaff ? 'Staff' : isOrganizations ? 'Companies' : 'Profile';
+    const isInventory = route().current('inventory.*') || route().current('projects.*');
+    const sectionName = isDashboard ? 'Overview' : isInventory ? 'Inventory' : isRoles ? 'Access & roles' : isStaff ? 'Staff' : isOrganizations ? 'Companies' : 'Profile';
 
     return (
         <div className="min-h-screen bg-[#f3f5ef] lg:flex">
@@ -36,6 +37,11 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
                     <Link href={route('organizations.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isOrganizations ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
                         <Network size={17} /> Companies & branches
                     </Link>
+                    {auth.canViewInventory && (
+                        <Link href={route('inventory.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isInventory ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                            <Boxes size={17} /> Inventory
+                        </Link>
+                    )}
                     {auth.canManageUsers && (
                         <>
                             <Link href={route('staff.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isStaff ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>

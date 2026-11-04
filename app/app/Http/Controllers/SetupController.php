@@ -79,6 +79,9 @@ class SetupController extends Controller
                 'users.manage' => 'Manage users and roles',
                 'settings.manage' => 'Manage company settings',
                 'audit.view' => 'View audit history',
+                'inventory.view' => 'View property inventory',
+                'inventory.manage' => 'Manage projects and inventory',
+                'inventory.reserve' => 'Reserve available inventory',
             ];
 
             $permissionIds = [];

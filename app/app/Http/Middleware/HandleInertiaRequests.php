@@ -34,6 +34,7 @@ class HandleInertiaRequests extends Middleware
             'auth' => [
                 'user' => $request->user(),
                 'canManageUsers' => $request->user()?->hasPermission('users.manage') ?? false,
+                'canViewInventory' => $request->user()?->hasPermission('inventory.view') ?? false,
             ],
             'company' => fn (): ?array => $request->user()?->organizations()
                 ->first(['organizations.id', 'organizations.name'])
