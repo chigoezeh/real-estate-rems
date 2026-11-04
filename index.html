@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mebil Realty Ltd - Admin Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-gray-50 font-sans">
+    <div class="flex h-screen overflow-hidden">
+        <!-- Sidebar -->
+        <aside class="w-64 bg-slate-900 text-slate-300 hidden md:flex flex-col justify-between">
+            <div>
+                <div class="p-6 border-b border-slate-800">
+                    <h1 class="text-xl font-bold text-white tracking-wider">MEBIL REALTY</h1>
+                    <p class="text-xs text-amber-500 uppercase tracking-widest mt-1">Enterprise REMS</p>
+                </div>
+                <nav class="p-4 space-y-1">
+                    <a href="index.html" class="flex items-center space-x-3 bg-amber-600 text-white p-3 rounded-lg font-medium shadow-md"><i class="fa-solid fa-chart-pie"></i><span>Dashboard</span></a>
+                    <a href="inventory.html" class="flex items-center space-x-3 p-3 rounded-lg hover:bg-slate-800 transition"><i class="fa-solid fa-map-location-dot"></i><span>Estate & Inventory</span></a>
+                    <a href="allocations.html" class="flex items-center space-x-3 p-3 rounded-lg hover:bg-slate-800 transition"><i class="fa-solid fa-file-contract"></i><span>Allocations & Docs</span></a>
+                    <a href="#" class="flex items-center space-x-3 p-3 rounded-lg hover:bg-slate-800 transition"><i class="fa-solid fa-wallet"></i><span>Financials & Ledger</span></a>
+                    <a href="#" class="flex items-center space-x-3 p-3 rounded-lg hover:bg-slate-800 transition"><i class="fa-solid fa-users-gear"></i><span>Realtor Commissions</span></a>
+                </nav>
+            </div>
+            <div class="p-4 border-t border-slate-800 text-xs text-slate-500">
+                <p>Life Camp, Abuja, NG</p>
+                <p class="mt-1">v2.0 Enterprise PHP Core</p>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <div class="flex-1 flex flex-col overflow-y-auto">
+            <!-- Top Navbar -->
+            <header class="bg-white border-b border-gray-200 p-4 flex justify-between items-center">
+                <div class="flex items-center space-x-3">
+                    <h2 class="text-xl font-semibold text-gray-800">Executive Overview</h2>
+                    <span class="bg-amber-100 text-amber-800 text-xs px-2.5 py-0.5 rounded-full font-semibold">Live Mode</span>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <span class="text-sm font-medium text-gray-600">Admin: Chigozie (Superuser)</span>
+                    <div class="w-10 h-10 rounded-full bg-slate-800 text-white flex items-center justify-center font-bold">MR</div>
+                </div>
+            </header>
+
+            <!-- Dashboard Body -->
+            <main class="p-6">
+                <!-- Metrics Grid -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                    <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                        <p class="text-sm font-medium text-gray-500">Total Gross Sales</p>
+                        <h3 class="text-2xl font-bold text-gray-900 mt-2">₦485,250,000</h3>
+                        <span class="text-xs text-green-600 font-semibold mt-1 inline-block"><i class="fa-solid fa-arrow-trend-up"></i> +12% this month</span>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                        <p class="text-sm font-medium text-gray-500">Active Subscriptions</p>
+                        <h3 class="text-2xl font-bold text-gray-900 mt-2">142 Plots</h3>
+                        <span class="text-xs text-blue-600 font-semibold mt-1 inline-block"><i class="fa-solid fa-circle-check"></i> 89 Fully Paid</span>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                        <p class="text-sm font-medium text-gray-500">Pending Allocations</p>
+                        <h3 class="text-2xl font-bold text-gray-900 mt-2">18 Clients</h3>
+                        <span class="text-xs text-amber-600 font-semibold mt-1 inline-block"><i class="fa-solid fa-clock"></i> Ready for batching</span>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                        <p class="text-sm font-medium text-gray-500">Realtor Commissions Due</p>
+                        <h3 class="text-2xl font-bold text-gray-900 mt-2">₦4,200,000</h3>
+                        <span class="text-xs text-purple-600 font-semibold mt-1 inline-block"><i class="fa-solid fa-wallet"></i> 34 Active Agents</span>
+                    </div>
+                </div>
+
+                <!-- Recent Subscriptions Table & Quick Actions -->
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div class="lg:col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="font-bold text-gray-800 text-lg">Recent Plot Subscriptions & Installments</h3>
+                            <a href="inventory.html" class="text-sm text-amber-600 font-semibold hover:underline">View Matrix Grid &rarr;</a>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-sm text-gray-600">
+                                <thead class="bg-gray-50 text-gray-700 uppercase text-xs">
+                                    <tr>
+                                        <th class="p-3">Client Name</th>
+                                        <th class="p-3">Estate / Plot</th>
+                                        <th class="p-3">Plan</th>
+                                        <th class="p-3">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-200">
+                                    <tr>
+                                        <td class="p-3 font-medium text-gray-900">Dr. Aminu Ibrahim</td>
+                                        <td class="p-3">Mebil Phase 1 (Blk A, Plt 4)</td>
+                                        <td class="p-3">6 Months</td>
+                                        <td class="p-3"><span class="bg-green-100 text-green-800 px-2.5 py-1 rounded-full text-xs font-semibold">Active (75%)</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="p-3 font-medium text-gray-900">Mrs. Ngozi Okeke</td>
+                                        <td class="p-3">Life Camp Haven (Blk C, Plt 12)</td>
+                                        <td class="p-3">Outright</td>
+                                        <td class="p-3"><span class="bg-blue-100 text-blue-800 px-2.5 py-1 rounded-full text-xs font-semibold">Completed (Allocated)</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="p-3 font-medium text-gray-900">Engr. Tunde Bakare</td>
+                                        <td class="p-3">Mebil Phase 2 (Blk B, Plt 05)</td>
+                                        <td class="p-3">12 Months</td>
+                                        <td class="p-3"><span class="bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full text-xs font-semibold">Defaulted (3 Days)</span></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Quick Panel -->
+                    <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex flex-col justify-between">
+                        <div>
+                            <h3 class="font-bold text-gray-800 text-lg mb-4">Quick Operational Actions</h3>
+                            <div class="space-y-3">
+                                <button class="w-full text-left p-3 bg-gray-50 hover:bg-amber-50 border border-gray-200 rounded-lg transition flex items-center justify-between">
+                                    <span class="text-sm font-medium text-gray-700"><i class="fa-solid fa-circle-plus text-amber-600 mr-2"></i> Register New Client Subscription</span>
+                                    <i class="fa-solid fa-chevron-right text-xs text-gray-400"></i>
+                                </button>
+                                <button class="w-full text-left p-3 bg-gray-50 hover:bg-amber-50 border border-gray-200 rounded-lg transition flex items-center justify-between">
+                                    <span class="text-sm font-medium text-gray-700"><i class="fa-solid fa-file-invoice-dollar text-amber-600 mr-2"></i> Verify Bank Transfer Slips</span>
+                                    <span class="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full font-bold">3 Pending</span>
+                                </button>
+                                <button class="w-full text-left p-3 bg-gray-50 hover:bg-amber-50 border border-gray-200 rounded-lg transition flex items-center justify-between">
+                                    <span class="text-sm font-medium text-gray-700"><i class="fa-solid fa-award text-amber-600 mr-2"></i> Process Realtor Commission Payout</span>
+                                    <i class="fa-solid fa-chevron-right text-xs text-gray-400"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="mt-6 p-4 bg-slate-900 text-white rounded-lg">
+                            <p class="text-xs text-amber-400 font-semibold uppercase">System Security Notice</p>
+                            <p class="text-xs text-slate-300 mt-1">All ledger actions are logged under NDPR audit compliance standards.</p>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+</body>
+</html>
