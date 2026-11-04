@@ -10,6 +10,7 @@ The Laravel application is in [`app/`](app/). The first implementation milestone
 - UUID-backed users, organizations, roles, permissions, and audit records
 - Parent, subsidiary, and branch management with permission-scoped access
 - Organization-scoped custom role management with editable permission assignments and protected system roles
+- Staff invitation, organization membership, role assignment, and access suspension
 - Login, a company-aware dashboard, and a responsive React/Inertia admin shell
 - MySQL as the default database connection
 

@@ -4,6 +4,7 @@ use App\Http\Controllers\OrganizationController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\RoleController;
 use App\Http\Controllers\SetupController;
+use App\Http\Controllers\StaffController;
 use App\Models\AuditLog;
 use App\Models\InstallationState;
 use App\Models\Organization;
@@ -33,6 +34,7 @@ Route::get('/dashboard', function () {
         'organizationCount' => count($organizationIds),
         'staffCount' => DB::table('organization_user')
             ->whereIn('organization_id', $organizationIds)
+            ->where('status', 'active')
             ->distinct()
             ->count('user_id'),
         'recentActivity' => AuditLog::query()
@@ -51,6 +53,9 @@ Route::middleware('auth')->group(function () {
     Route::get('/access/roles', [RoleController::class, 'index'])->name('roles.index');
     Route::post('/access/roles', [RoleController::class, 'store'])->name('roles.store');
     Route::put('/access/roles/{role}', [RoleController::class, 'update'])->name('roles.update');
+    Route::get('/staff', [StaffController::class, 'index'])->name('staff.index');
+    Route::post('/staff', [StaffController::class, 'store'])->name('staff.store');
+    Route::patch('/staff/{staff}', [StaffController::class, 'update'])->name('staff.update');
 });
 
 Route::middleware('auth')->group(function () {
