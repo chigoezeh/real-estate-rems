@@ -222,6 +222,7 @@ class InventoryController extends Controller
             'base_price' => ['required', 'numeric', 'min:0', 'max:9999999999999.99'],
             'title_type' => ['nullable', 'string', 'max:80', Rule::in($titleTypes)],
             'title_status' => ['nullable', 'string', 'max:80'],
+            'rental_status' => ['sometimes', Rule::in(['not_listed', 'available'])],
             'is_corner' => ['required', 'boolean'],
             'corner_premium_percent' => ['required', 'numeric', 'min:0', 'max:100'],
             'topography_premium_amount' => ['required', 'numeric', 'min:0', 'max:9999999999999.99'],
@@ -229,6 +230,7 @@ class InventoryController extends Controller
 
         $unit = $project->units()->create([
             ...$validated,
+            'rental_status' => $validated['rental_status'] ?? 'not_listed',
             'phase' => trim($validated['phase'] ?? ''),
             'block' => trim($validated['block'] ?? ''),
             'status' => 'available',
@@ -358,6 +360,7 @@ class InventoryController extends Controller
             'basePrice' => $unit->base_price,
             'titleType' => $unit->title_type,
             'titleStatus' => $unit->title_status,
+            'rentalStatus' => $unit->rental_status,
             'status' => $unit->status,
             'isCorner' => $unit->is_corner,
             'cornerPremiumPercent' => $unit->corner_premium_percent,

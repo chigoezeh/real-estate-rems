@@ -10,7 +10,7 @@ use App\Models\Project;
 use App\Models\PropertyUnit;
 use App\Models\Reservation;
 use App\Models\Subscription;
-use App\Models\User;
+use App\Support\Money;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -49,11 +49,10 @@ class SubscriptionController extends Controller
                 'unitCode' => trim($subscription->propertyUnit->phase.' '.$subscription->propertyUnit->block.' '.$subscription->propertyUnit->code),
                 'paymentPlanMonths' => $subscription->payment_plan_months,
                 'landPrice' => $subscription->land_price,
-                'statutoryFees' => number_format(
-                    (float) $subscription->development_fee + (float) $subscription->deed_fee + (float) $subscription->survey_fee,
-                    2,
-                    '.',
-                    '',
+                'statutoryFees' => Money::fromMinorUnits(
+                    Money::toMinorUnits($subscription->development_fee)
+                    + Money::toMinorUnits($subscription->deed_fee)
+                    + Money::toMinorUnits($subscription->survey_fee),
                 ),
                 'status' => $subscription->status,
                 'createdAt' => $subscription->created_at?->toIso8601String(),
@@ -157,7 +156,7 @@ class SubscriptionController extends Controller
                 'created_by_user_id' => $user->id,
                 'subscription_number' => 'SUB-'.now()->format('Y').'-'.Str::upper(Str::random(8)),
                 'payment_plan_months' => $months,
-                'land_price' => $this->formatCents($landPriceCents),
+                'land_price' => Money::fromMinorUnits($landPriceCents),
                 'development_fee' => $validated['development_fee'],
                 'deed_fee' => $validated['deed_fee'],
                 'survey_fee' => $validated['survey_fee'],
@@ -167,9 +166,9 @@ class SubscriptionController extends Controller
 
             $totals = [
                 'land_installment' => $landPriceCents,
-                'development_levy' => $this->moneyToCents($validated['development_fee']),
-                'deed_fee' => $this->moneyToCents($validated['deed_fee']),
-                'survey_fee' => $this->moneyToCents($validated['survey_fee']),
+                'development_levy' => Money::toMinorUnits($validated['development_fee']),
+                'deed_fee' => Money::toMinorUnits($validated['deed_fee']),
+                'survey_fee' => Money::toMinorUnits($validated['survey_fee']),
             ];
 
             foreach ($totals as $category => $totalCents) {
@@ -183,7 +182,7 @@ class SubscriptionController extends Controller
                         'category' => $category,
                         'installment_number' => $index + 1,
                         'due_date' => $months === 1 ? today() : today()->addMonthsNoOverflow($index + 1),
-                        'amount' => $this->formatCents($amountCents),
+                        'amount' => Money::fromMinorUnits($amountCents),
                         'status' => 'unpaid',
                     ]);
                 }
@@ -213,17 +212,17 @@ class SubscriptionController extends Controller
 
     private function effectiveLandPrice(PropertyUnit $unit): string
     {
-        return $this->formatCents($this->effectiveLandPriceCents($unit));
+        return Money::fromMinorUnits($this->effectiveLandPriceCents($unit));
     }
 
     private function effectiveLandPriceCents(PropertyUnit $unit): int
     {
-        $basePriceCents = $this->moneyToCents($unit->base_price);
+        $basePriceCents = Money::toMinorUnits($unit->base_price);
         $cornerPremiumCents = $unit->is_corner
-            ? (int) round($basePriceCents * (float) $unit->corner_premium_percent / 100)
+            ? Money::percentageOf($basePriceCents, $unit->corner_premium_percent)
             : 0;
 
-        return $basePriceCents + $cornerPremiumCents + $this->moneyToCents($unit->topography_premium_amount);
+        return $basePriceCents + $cornerPremiumCents + Money::toMinorUnits($unit->topography_premium_amount);
     }
 
     /** @return array<int, int> */
@@ -236,15 +235,5 @@ class SubscriptionController extends Controller
             fn (int $index): int => $baseAmount + ($index < $remainder ? 1 : 0),
             range(0, $installments - 1),
         );
-    }
-
-    private function moneyToCents(float|int|string $amount): int
-    {
-        return (int) round((float) $amount * 100);
-    }
-
-    private function formatCents(int $amount): string
-    {
-        return number_format($amount / 100, 2, '.', '');
     }
 }

@@ -8,6 +8,7 @@ use App\Models\Organization;
 use App\Models\Payment;
 use App\Models\Subscription;
 use App\Models\User;
+use App\Support\Money;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -75,7 +76,7 @@ class PaymentController extends Controller
                     'dueDate' => $schedule->due_date->toDateString(),
                     'amount' => $schedule->amount,
                     'amountPaid' => $schedule->amount_paid,
-                    'outstanding' => $this->formatCents($this->moneyToCents($schedule->amount) - $this->moneyToCents($schedule->amount_paid)),
+                    'outstanding' => Money::fromMinorUnits(Money::toMinorUnits($schedule->amount) - Money::toMinorUnits($schedule->amount_paid)),
                 ])
                 ->values(),
             'canSubmit' => $user->hasPermission('payments.submit'),
@@ -107,13 +108,13 @@ class PaymentController extends Controller
             DB::transaction(function () use ($request, $user, $validated, $schedule, $proofPath): void {
                 $lockedSchedule = InstallmentSchedule::query()->lockForUpdate()->findOrFail($schedule->id);
                 $subscription = Subscription::query()->findOrFail($lockedSchedule->subscription_id);
-                $outstandingCents = $this->moneyToCents($lockedSchedule->amount) - $this->moneyToCents($lockedSchedule->amount_paid);
+                $outstandingCents = Money::toMinorUnits($lockedSchedule->amount) - Money::toMinorUnits($lockedSchedule->amount_paid);
                 $pendingCents = Payment::query()
                     ->where('installment_schedule_id', $lockedSchedule->id)
                     ->where('status', 'pending')
                     ->get(['amount'])
-                    ->sum(fn (Payment $payment): int => $this->moneyToCents($payment->amount));
-                $paymentCents = $this->moneyToCents($validated['amount']);
+                    ->sum(fn (Payment $payment): int => Money::toMinorUnits($payment->amount));
+                $paymentCents = Money::toMinorUnits($validated['amount']);
                 abort_unless($paymentCents + $pendingCents <= $outstandingCents, 409, 'Submitted payments exceed the outstanding installment balance.');
 
                 $payment = Payment::create([
@@ -122,7 +123,7 @@ class PaymentController extends Controller
                     'installment_schedule_id' => $lockedSchedule->id,
                     'submitted_by_user_id' => $user->id,
                     'payment_category' => $lockedSchedule->category,
-                    'amount' => $this->formatCents($paymentCents),
+                    'amount' => Money::fromMinorUnits($paymentCents),
                     'payment_method' => $validated['payment_method'],
                     'transaction_reference' => $validated['transaction_reference'] ?? null,
                     'proof_document_path' => $proofPath,
@@ -156,11 +157,11 @@ class PaymentController extends Controller
             $schedule = InstallmentSchedule::query()->lockForUpdate()->findOrFail($lockedPayment->installment_schedule_id);
 
             if ($validated['decision'] === 'approved') {
-                $paidCents = $this->moneyToCents($schedule->amount_paid) + $this->moneyToCents($lockedPayment->amount);
-                abort_unless($paidCents <= $this->moneyToCents($schedule->amount), 409, 'Approval would exceed the installment balance.');
+                $paidCents = Money::toMinorUnits($schedule->amount_paid) + Money::toMinorUnits($lockedPayment->amount);
+                abort_unless($paidCents <= Money::toMinorUnits($schedule->amount), 409, 'Approval would exceed the installment balance.');
                 $schedule->update([
-                    'amount_paid' => $this->formatCents($paidCents),
-                    'status' => $paidCents === $this->moneyToCents($schedule->amount) ? 'paid' : 'partially_paid',
+                    'amount_paid' => Money::fromMinorUnits($paidCents),
+                    'status' => $paidCents === Money::toMinorUnits($schedule->amount) ? 'paid' : 'partially_paid',
                 ]);
             }
 
@@ -202,15 +203,5 @@ class PaymentController extends Controller
             'ip_address' => $request->ip(),
             'user_agent' => $request->userAgent(),
         ]);
-    }
-
-    private function moneyToCents(float|int|string $amount): int
-    {
-        return (int) round((float) $amount * 100);
-    }
-
-    private function formatCents(int $amount): string
-    {
-        return number_format($amount / 100, 2, '.', '');
     }
 }

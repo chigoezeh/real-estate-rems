@@ -32,6 +32,7 @@ type Unit = {
     basePrice: string;
     titleType: string | null;
     titleStatus: string | null;
+    rentalStatus: string;
     status: string;
     isCorner: boolean;
     cornerPremiumPercent: string;
@@ -69,6 +70,7 @@ type UnitForm = {
     base_price: string;
     title_type: string;
     title_status: string;
+    rental_status: 'not_listed' | 'available';
     is_corner: boolean;
     corner_premium_percent: string;
     topography_premium_amount: string;
@@ -84,6 +86,7 @@ const emptyUnit = (titleType: string): UnitForm => ({
     base_price: '',
     title_type: titleType,
     title_status: '',
+    rental_status: 'not_listed',
     is_corner: false,
     corner_premium_percent: '0',
     topography_premium_amount: '0',
@@ -234,7 +237,7 @@ export default function Index({ projects, selectedProjectId, units, organization
                                             <span className="truncate text-sm capitalize text-[#4c6259]">{unit.unitType}</span>
                                             <span className="text-sm tabular-nums text-[#4c6259]">{unit.areaSqm ? `${Number(unit.areaSqm).toLocaleString()} m²` : '—'}</span>
                                             <span className="text-sm tabular-nums text-[#4c6259]">{currencyFormat.format(Number(unit.basePrice))}</span>
-                                            <span className="truncate text-sm text-[#4c6259]">{unit.titleType ?? '—'}{unit.titleStatus ? <span className="mt-1 block truncate text-xs text-[#89958e]">{unit.titleStatus}</span> : null}</span>
+                                            <span className="truncate text-sm text-[#4c6259]">{unit.titleType ?? '—'}{unit.titleStatus ? <span className="mt-1 block truncate text-xs text-[#89958e]">{unit.titleStatus}</span> : null}<span className="mt-1 block truncate text-xs text-[#89958e]">Rent: {unit.rentalStatus === 'available' ? 'Available' : unit.rentalStatus === 'occupied' ? 'Occupied' : 'Not listed'}</span></span>
                                             <span className="text-xs leading-5 text-[#65776e]">{unit.isCorner ? `Corner +${unit.cornerPremiumPercent}%` : 'None'}{Number(unit.topographyPremiumAmount) > 0 ? <span className="block">Topography {currencyFormat.format(Number(unit.topographyPremiumAmount))}</span> : null}</span>
                                             <div>
                                                 <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${statusClass(unit)}`}>
@@ -320,6 +323,14 @@ export default function Index({ projects, selectedProjectId, units, organization
                                 <InputError message={unitForm.errors.title_type} className="mt-2" />
                             </div>
                             <Field label="Title status" id="unit-title-status" value={unitForm.data.title_status} onChange={(value) => unitForm.setData('title_status', value)} error={unitForm.errors.title_status} hint="Company-defined progress, e.g. applied or registered." />
+                            <div>
+                                <label htmlFor="unit-rental-status" className="field-label">Rental listing</label>
+                                <Select id="unit-rental-status" value={unitForm.data.rental_status} onChange={(value) => unitForm.setData('rental_status', value as UnitForm['rental_status'])}>
+                                    <option value="not_listed">Not listed for rent</option>
+                                    <option value="available">Available for rent</option>
+                                </Select>
+                                <InputError message={unitForm.errors.rental_status} className="mt-2" />
+                            </div>
                         </div>
                         <fieldset className="border-t border-[#e7ece6] pt-5">
                             <legend className="field-label">Premiums</legend>

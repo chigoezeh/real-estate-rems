@@ -37,8 +37,11 @@ class HandleInertiaRequests extends Middleware
                 'canViewInventory' => $request->user()?->hasPermission('inventory.view') ?? false,
                 'canViewClients' => $request->user()?->hasPermission('clients.view') ?? false,
                 'canViewSubscriptions' => $request->user()?->hasPermission('subscriptions.view') ?? false,
-                    'canViewPayments' => $request->user()?->hasPermission('payments.view') ?? false,
-                    'canViewInspections' => $request->user()?->hasPermission('inspections.view') ?? false,
+                'canViewPayments' => $request->user()?->hasPermission('payments.view') ?? false,
+                'canViewInspections' => $request->user()?->hasPermission('inspections.view') ?? false,
+                'canViewTenancies' => $request->user()?->hasPermission('tenancies.view') ?? false,
+                'canViewRentPayments' => $request->user()?->hasPermission('rent_payments.view') ?? false,
+                'canViewMaintenance' => $request->user()?->hasPermission('maintenance.view') ?? false,
             ],
             'company' => fn (): ?array => $request->user()?->organizations()
                 ->first(['organizations.id', 'organizations.name'])

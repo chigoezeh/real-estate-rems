@@ -92,6 +92,14 @@ class SetupController extends Controller
                 'payments.review' => 'Approve or reject submitted payments',
                 'inspections.view' => 'View site inspection bookings',
                 'inspections.manage' => 'Schedule and manage site inspections',
+                'tenancies.view' => 'View rental tenancies',
+                'tenancies.manage' => 'Create and manage rental tenancies',
+                'rent_payments.view' => 'View rent payments and schedules',
+                'rent_payments.submit' => 'Submit rent payments and proof',
+                'rent_payments.review' => 'Approve or reject rent payments',
+                'maintenance.view' => 'View property maintenance requests',
+                'maintenance.manage' => 'Manage property maintenance and work orders',
+                'charges.manage' => 'Manage company charge policies',
             ];
 
             $permissionIds = [];

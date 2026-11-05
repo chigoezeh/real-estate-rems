@@ -33,6 +33,24 @@ class Organization extends Model
         return $this->hasMany(Role::class);
     }
 
+    /** @return HasMany<OrganizationChargeType, $this> */
+    public function chargeTypes(): HasMany
+    {
+        return $this->hasMany(OrganizationChargeType::class);
+    }
+
+    /** @return HasMany<Tenancy, $this> */
+    public function tenancies(): HasMany
+    {
+        return $this->hasMany(Tenancy::class);
+    }
+
+    /** @return HasMany<MaintenanceRequest, $this> */
+    public function maintenanceRequests(): HasMany
+    {
+        return $this->hasMany(MaintenanceRequest::class);
+    }
+
     /** @return BelongsToMany<User, $this> */
     public function members(): BelongsToMany
     {

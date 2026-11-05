@@ -1,5 +1,5 @@
 import { Link, usePage } from '@inertiajs/react';
-import { BadgeDollarSign, Building2, Boxes, CalendarDays, ChevronDown, FileUser, KeyRound, LayoutDashboard, LogOut, MapPinned, Network, ReceiptText, Users } from 'lucide-react';
+import { BadgeDollarSign, Building2, Boxes, CalendarDays, ChevronDown, FileUser, KeyRound, LayoutDashboard, LogOut, MapPinned, Network, ReceiptText, Users, WalletCards } from 'lucide-react';
 import { PropsWithChildren, ReactNode } from 'react';
 import { PageProps } from '@/types';
 
@@ -15,7 +15,10 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
     const isSubscriptions = route().current('subscriptions.*');
     const isPayments = route().current('payments.*');
     const isInspections = route().current('inspections.*');
-    const sectionName = isDashboard ? 'Overview' : isInventory ? 'Inventory' : isInspections ? 'Inspections' : isPayments ? 'Payments' : isSubscriptions ? 'Subscriptions' : isClients ? 'Clients' : isRoles ? 'Access & roles' : isStaff ? 'Staff' : isOrganizations ? 'Companies' : 'Profile';
+    const isTenancies = route().current('tenancies.*');
+    const isRentPayments = route().current('rent-payments.*');
+    const isMaintenance = route().current('maintenance.*');
+    const sectionName = isDashboard ? 'Overview' : isInventory ? 'Inventory' : isInspections ? 'Inspections' : isPayments ? 'Payments' : isRentPayments ? 'Rent payments' : isTenancies ? 'Tenancies' : isMaintenance ? 'Maintenance' : isSubscriptions ? 'Subscriptions' : isClients ? 'Clients' : isRoles ? 'Access & roles' : isStaff ? 'Staff' : isOrganizations ? 'Companies' : 'Profile';
 
     return (
         <div className="min-h-screen bg-[#f3f5ef] lg:flex">
@@ -59,6 +62,21 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
                     {auth.canViewPayments && (
                         <Link href={route('payments.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isPayments ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
                             <ReceiptText size={17} /> Payments
+                        </Link>
+                    )}
+                    {auth.canViewTenancies && (
+                        <Link href={route('tenancies.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isTenancies ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                            <Building2 size={17} /> Tenancies
+                        </Link>
+                    )}
+                    {auth.canViewRentPayments && (
+                        <Link href={route('rent-payments.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isRentPayments ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                            <WalletCards size={17} /> Rent payments
+                        </Link>
+                    )}
+                    {auth.canViewMaintenance && (
+                        <Link href={route('maintenance.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isMaintenance ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                            <Boxes size={17} /> Maintenance
                         </Link>
                     )}
                     {auth.canViewInspections && (

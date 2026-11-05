@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Database\Factories\ClientFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -31,7 +32,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 #[Hidden(['identity_number', 'identity_document_path'])]
 class Client extends Model
 {
-    /** @use HasFactory<\Database\Factories\ClientFactory> */
+    /** @use HasFactory<ClientFactory> */
     use HasFactory, HasUuids;
 
     /** @return BelongsTo<Organization, $this> */
@@ -62,6 +63,12 @@ class Client extends Model
     public function subscriptions(): HasMany
     {
         return $this->hasMany(Subscription::class);
+    }
+
+    /** @return HasMany<Tenancy, $this> */
+    public function tenancies(): HasMany
+    {
+        return $this->hasMany(Tenancy::class, 'tenant_client_id');
     }
 
     /** @return array<string, string> */
