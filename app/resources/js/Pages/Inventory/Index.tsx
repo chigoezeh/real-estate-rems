@@ -1,7 +1,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import InputError from '@/Components/InputError';
 import { Head, Link, router, useForm } from '@inertiajs/react';
-import { Boxes, Building2, ChevronDown, Clock3, MapPin, Plus, RotateCcw, ShieldCheck, X } from 'lucide-react';
+import { Boxes, Building2, ChevronDown, Clock3, MapPin, Plus, RotateCcw, Settings2, ShieldCheck, X } from 'lucide-react';
 import { FormEventHandler, useMemo, useState } from 'react';
 
 type Organization = { id: string; name: string };
@@ -13,8 +13,13 @@ type Project = {
     name: string;
     code: string;
     location: string | null;
+    description: string | null;
     titleTypes: string[];
+    statusLabels: Record<InventoryStatus, string>;
+    reservationHours: number;
     unitsCount: number;
+    canManage: boolean;
+    canReserve: boolean;
 };
 type Unit = {
     id: string;
@@ -43,7 +48,17 @@ type Props = {
     canManage: boolean;
     canReserve: boolean;
 };
-type ProjectForm = { organization_id: string; name: string; code: string; location: string; description: string; title_types: string };
+type InventoryStatus = 'available' | 'reserved' | 'under_installment' | 'allocated' | 'sold';
+type ProjectForm = {
+    organization_id: string;
+    name: string;
+    code: string;
+    location: string;
+    description: string;
+    title_types: string[];
+    status_labels: Record<InventoryStatus, string>;
+    reservation_hours: string;
+};
 type UnitForm = {
     phase: string;
     block: string;
@@ -74,9 +89,18 @@ const emptyUnit = (titleType: string): UnitForm => ({
     topography_premium_amount: '0',
 });
 
+const defaultStatusLabels: Record<InventoryStatus, string> = {
+    available: 'Available',
+    reserved: 'Reserved',
+    under_installment: 'Under installment',
+    allocated: 'Allocated',
+    sold: 'Sold',
+};
+
 export default function Index({ projects, selectedProjectId, units, organizations, canManage, canReserve }: Props) {
     const [isAddingProject, setIsAddingProject] = useState(false);
     const [isAddingUnit, setIsAddingUnit] = useState(false);
+    const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
     const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
     const availableCount = units.filter((unit) => unit.status === 'available' || unit.reservationExpired).length;
     const reservedCount = units.filter((unit) => unit.status === 'reserved' && !unit.reservationExpired).length;
@@ -93,22 +117,45 @@ export default function Index({ projects, selectedProjectId, units, organization
         code: '',
         location: '',
         description: '',
-        title_types: 'Certificate of Occupancy, Governor Consent, Excision',
+        title_types: ['Certificate of Occupancy', 'Governor Consent', 'Excision'],
+        status_labels: defaultStatusLabels,
+        reservation_hours: '24',
     });
     const unitForm = useForm<UnitForm>(emptyUnit(selectedProject?.titleTypes[0] ?? ''));
 
+    const openProjectForm = (project?: Project) => {
+        projectForm.clearErrors();
+        setEditingProjectId(project?.id ?? null);
+        projectForm.setData({
+            organization_id: project?.organizationId ?? organizations[0]?.id ?? '',
+            name: project?.name ?? '',
+            code: project?.code ?? '',
+            location: project?.location ?? '',
+            description: project?.description ?? '',
+            title_types: project?.titleTypes ?? ['Certificate of Occupancy', 'Governor Consent', 'Excision'],
+            status_labels: project?.statusLabels ?? defaultStatusLabels,
+            reservation_hours: String(project?.reservationHours ?? 24),
+        });
+        setIsAddingProject(true);
+    };
+
+    const closeProjectForm = () => {
+        setIsAddingProject(false);
+        setEditingProjectId(null);
+    };
+
     const submitProject: FormEventHandler = (event) => {
         event.preventDefault();
-        projectForm.transform((data) => ({
-            ...data,
-            title_types: [...new Set(data.title_types.split(',').map((titleType) => titleType.trim()).filter(Boolean))],
-        }));
-        projectForm.post(route('projects.store'), {
+        const options = {
             onSuccess: () => {
-                setIsAddingProject(false);
-                projectForm.reset('name', 'code', 'location', 'description');
+                closeProjectForm();
             },
-        });
+        };
+        if (editingProjectId) {
+            projectForm.put(route('projects.update', editingProjectId), options);
+        } else {
+            projectForm.post(route('projects.store'), options);
+        }
     };
 
     const submitUnit: FormEventHandler = (event) => {
@@ -143,8 +190,9 @@ export default function Index({ projects, selectedProjectId, units, organization
                     </div>
                     {canManage && (
                         <div className="flex flex-wrap gap-2">
-                            {selectedProject && <button type="button" onClick={() => { unitForm.clearErrors(); setIsAddingUnit(true); }} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[#cbd8ce] bg-white px-4 text-sm font-semibold text-[#29483e] transition hover:bg-[#f9fbf8]"><Plus size={17} /> Add unit</button>}
-                            <button type="button" onClick={() => { projectForm.clearErrors(); setIsAddingProject(true); }} disabled={organizations.length === 0} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#17352d] px-4 text-sm font-semibold text-white transition hover:bg-[#244b40] disabled:opacity-50"><Building2 size={17} /> New project</button>
+                            {selectedProject && selectedProject.canManage && <button type="button" onClick={() => { unitForm.clearErrors(); unitForm.setData(emptyUnit(selectedProject.titleTypes[0] ?? '')); setIsAddingUnit(true); }} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[#cbd8ce] bg-white px-4 text-sm font-semibold text-[#29483e] transition hover:bg-[#f9fbf8]"><Plus size={17} /> Add unit</button>}
+                            {selectedProject && selectedProject.canManage && <button type="button" onClick={() => openProjectForm(selectedProject)} className="grid size-11 place-items-center rounded-lg border border-[#cbd8ce] bg-white text-[#29483e] transition hover:bg-[#f9fbf8]" aria-label="Project settings" title="Project settings"><Settings2 size={17} /></button>}
+                            {canManage && <button type="button" onClick={() => openProjectForm()} disabled={organizations.length === 0} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#17352d] px-4 text-sm font-semibold text-white transition hover:bg-[#244b40] disabled:opacity-50"><Building2 size={17} /> New project</button>}
                         </div>
                     )}
                 </div>
@@ -164,9 +212,10 @@ export default function Index({ projects, selectedProjectId, units, organization
                             {selectedProject?.location && <p className="flex items-center gap-2 text-sm text-[#687970]"><MapPin size={16} /> {selectedProject.location}</p>}
                         </div>
 
-                        <div className="grid gap-4 sm:grid-cols-3">
+                        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                             <Summary label="Total units" value={String(units.length)} icon={Boxes} />
                             <Summary label="Available" value={String(availableCount)} icon={ShieldCheck} />
+                            <Summary label="Reserved" value={String(reservedCount)} icon={Clock3} />
                             <Summary label="Listed base value" value={currencyFormat.format(totalValue)} icon={Building2} />
                         </div>
 
@@ -190,13 +239,14 @@ export default function Index({ projects, selectedProjectId, units, organization
                                             <div>
                                                 <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${statusClass(unit)}`}>
                                                     <span className="size-1.5 rounded-full bg-current" />
-                                                    {unit.reservationExpired ? 'Hold expired' : unit.status.replaceAll('_', ' ')}
+                                                    {unit.reservationExpired ? 'Hold expired' : selectedProject?.statusLabels[unit.status as InventoryStatus] ?? unit.status.replaceAll('_', ' ')}
                                                 </span>
                                                 {unit.reservedBy && !unit.reservationExpired && <p className="mt-1 truncate text-xs text-[#89958e]">Held by {unit.reservedBy}</p>}
+                                                {unit.reservedUntil && !unit.reservationExpired && <p className="mt-1 truncate text-xs text-[#89958e]">Expires {new Date(unit.reservedUntil).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}</p>}
                                             </div>
                                             <div className="flex justify-end">
-                                                {canReserve && (unit.status === 'available' || unit.reservationExpired) && <button type="button" onClick={() => reserve(unit)} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#17352d] px-3 text-xs font-semibold text-white hover:bg-[#244b40]"><Clock3 size={14} /> Reserve</button>}
-                                                {canManage && unit.status === 'reserved' && !unit.reservationExpired && <button type="button" onClick={() => release(unit)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#d9e1d9] px-3 text-xs font-semibold text-[#53675e] hover:bg-[#f8faf6]"><RotateCcw size={14} /> Release</button>}
+                                                {canReserve && selectedProject?.canReserve && (unit.status === 'available' || unit.reservationExpired) && <button type="button" onClick={() => reserve(unit)} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#17352d] px-3 text-xs font-semibold text-white hover:bg-[#244b40]"><Clock3 size={14} /> Reserve</button>}
+                                                {canManage && selectedProject?.canManage && unit.status === 'reserved' && !unit.reservationExpired && <button type="button" onClick={() => release(unit)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#d9e1d9] px-3 text-xs font-semibold text-[#53675e] hover:bg-[#f8faf6]"><RotateCcw size={14} /> Release</button>}
                                             </div>
                                         </div>
                                     ))}
@@ -210,33 +260,42 @@ export default function Index({ projects, selectedProjectId, units, organization
                         <span className="grid size-12 place-items-center rounded-xl bg-[#edf4eb] text-[#315447]"><Boxes size={22} /></span>
                         <h2 className="mt-4 font-display text-xl text-[#18342c]">No projects yet</h2>
                         <p className="mt-2 max-w-md text-sm leading-6 text-[#718078]">Create a project to start organizing plots, buildings, and other property units.</p>
-                        {canManage && <button type="button" onClick={() => setIsAddingProject(true)} disabled={organizations.length === 0} className="mt-5 inline-flex h-10 items-center gap-2 rounded-lg bg-[#17352d] px-4 text-sm font-semibold text-white hover:bg-[#244b40] disabled:opacity-50"><Plus size={16} /> New project</button>}
+                        {canManage && <button type="button" onClick={() => openProjectForm()} disabled={organizations.length === 0} className="mt-5 inline-flex h-10 items-center gap-2 rounded-lg bg-[#17352d] px-4 text-sm font-semibold text-white hover:bg-[#244b40] disabled:opacity-50"><Plus size={16} /> New project</button>}
                     </div>
                 )}
             </div>
 
             {isAddingProject && (
-                <Dialog title="Create a project" eyebrow="Portfolio setup" onClose={() => setIsAddingProject(false)}>
+                <Dialog title={editingProjectId ? 'Project settings' : 'Create a project'} eyebrow="Portfolio setup" onClose={closeProjectForm}>
                     <form onSubmit={submitProject} className="space-y-5">
-                        <div>
+                        {!editingProjectId && <div>
                             <label htmlFor="project-organization" className="field-label">Organization</label>
                             <Select id="project-organization" value={projectForm.data.organization_id} onChange={(value) => projectForm.setData('organization_id', value)}>
                                 {organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
                             </Select>
                             <InputError message={projectForm.errors.organization_id} className="mt-2" />
-                        </div>
+                        </div>}
                         <div className="grid gap-4 sm:grid-cols-2">
                             <Field label="Project name" id="project-name" value={projectForm.data.name} onChange={(value) => projectForm.setData('name', value)} error={projectForm.errors.name} />
                             <Field label="Project code" id="project-code" value={projectForm.data.code} onChange={(value) => projectForm.setData('code', value)} error={projectForm.errors.code} />
                             <Field label="Location" id="project-location" value={projectForm.data.location} onChange={(value) => projectForm.setData('location', value)} error={projectForm.errors.location} />
-                            <Field label="Title types" id="project-title-types" value={projectForm.data.title_types} onChange={(value) => projectForm.setData('title_types', value)} error={projectForm.errors.title_types} hint="Separate each configurable title type with a comma." />
+                            <Field label="Title types" id="project-title-types" value={projectForm.data.title_types.join(', ')} onChange={(value) => projectForm.setData('title_types', [...new Set(value.split(',').map((titleType) => titleType.trim()).filter(Boolean))])} error={projectForm.errors.title_types} hint="Separate each configurable title type with a comma." />
+                            <Field label="Reservation duration (hours)" id="project-reservation-hours" type="number" min="1" max="168" value={projectForm.data.reservation_hours} onChange={(value) => projectForm.setData('reservation_hours', value)} error={projectForm.errors.reservation_hours} hint="Between 1 and 168 hours." />
                         </div>
+                        <fieldset className="border-t border-[#e7ece6] pt-5">
+                            <legend className="field-label">Inventory status labels</legend>
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                {(Object.keys(defaultStatusLabels) as InventoryStatus[]).map((status) => (
+                                    <Field key={status} label={status.replaceAll('_', ' ')} id={`status-${status}`} value={projectForm.data.status_labels[status]} onChange={(value) => projectForm.setData('status_labels', { ...projectForm.data.status_labels, [status]: value })} error={projectForm.errors[`status_labels.${status}` as keyof typeof projectForm.errors]} />
+                                ))}
+                            </div>
+                        </fieldset>
                         <div>
                             <label htmlFor="project-description" className="field-label">Description</label>
                             <textarea id="project-description" rows={2} value={projectForm.data.description} onChange={(event) => projectForm.setData('description', event.target.value)} className="field-input resize-y" />
                             <InputError message={projectForm.errors.description} className="mt-2" />
                         </div>
-                        <DialogActions onClose={() => setIsAddingProject(false)} processing={projectForm.processing} submitLabel="Create project" />
+                        <DialogActions onClose={closeProjectForm} processing={projectForm.processing} submitLabel={editingProjectId ? 'Save settings' : 'Create project'} />
                     </form>
                 </Dialog>
             )}

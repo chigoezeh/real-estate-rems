@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Organization;
+use App\Models\Permission;
 use App\Models\Project;
 use App\Models\PropertyUnit;
 use App\Models\Reservation;
@@ -59,6 +60,79 @@ class InventoryManagementTest extends TestCase
                 ->where('auth.canViewInventory', true));
     }
 
+    public function test_inventory_actions_are_scoped_per_organization(): void
+    {
+        $owner = $this->installOwner();
+        $root = $owner->organizations()->firstOrFail();
+        $managedOrganization = Organization::create([
+            'parent_id' => $root->id,
+            'name' => 'Managed Branch',
+            'kind' => 'branch',
+            'country' => 'NG',
+            'currency' => 'NGN',
+            'timezone' => 'Africa/Lagos',
+            'locale' => 'en',
+        ]);
+        $viewOnlyOrganization = Organization::create([
+            'parent_id' => $root->id,
+            'name' => 'View Only Branch',
+            'kind' => 'branch',
+            'country' => 'NG',
+            'currency' => 'NGN',
+            'timezone' => 'Africa/Lagos',
+            'locale' => 'en',
+        ]);
+        $viewerRole = $root->roles()->create(['name' => 'Inventory Viewer', 'key' => 'inventory-viewer']);
+        $viewerRole->permissions()->attach(Permission::query()->where('key', 'inventory.view')->value('id'));
+        $managerRole = $managedOrganization->roles()->create(['name' => 'Inventory Manager', 'key' => 'inventory-manager']);
+        $managerRole->permissions()->attach(Permission::query()->whereIn('key', ['inventory.view', 'inventory.manage', 'inventory.reserve'])->pluck('id'));
+        $user = User::factory()->create();
+        $root->members()->attach($user->id, ['role_id' => $viewerRole->id, 'status' => 'active']);
+        $managedOrganization->members()->attach($user->id, ['role_id' => $managerRole->id, 'status' => 'active']);
+        $managedProject = $this->createProject($managedOrganization);
+        $managedProject->update(['name' => 'A Managed Project']);
+        $viewOnlyProject = $this->createProject($viewOnlyOrganization);
+        $viewOnlyProject->update(['name' => 'B View Project']);
+
+        $this->actingAs($user)
+            ->get(route('inventory.index', absolute: false))
+            ->assertInertia(fn (Assert $page) => $page
+                ->has('projects', 2)
+                ->where('projects.0.id', $managedProject->id)
+                ->where('projects.0.canManage', true)
+                ->where('projects.0.canReserve', true)
+                ->where('projects.1.id', $viewOnlyProject->id)
+                ->where('projects.1.canManage', false)
+                ->where('projects.1.canReserve', false));
+    }
+
+    public function test_owner_can_update_project_status_labels_and_reservation_duration(): void
+    {
+        $owner = $this->installOwner();
+        $project = $this->createProject($owner->organizations()->firstOrFail());
+
+        $this->actingAs($owner)->put(route('projects.update', $project, absolute: false), [
+            'name' => 'Harbour View Estates',
+            'code' => 'HV-02',
+            'location' => 'Lagos Island',
+            'description' => 'Residential and mixed-use properties.',
+            'title_types' => ['Governor Consent', 'Freehold'],
+            'status_labels' => [
+                'available' => 'Open',
+                'reserved' => 'On hold',
+                'under_installment' => 'Payment plan',
+                'allocated' => 'Assigned',
+                'sold' => 'Closed',
+            ],
+            'reservation_hours' => 36,
+        ])->assertRedirect(route('inventory.index', ['project_id' => $project->id], absolute: false));
+
+        $this->assertSame('HV-02', $project->fresh()->code);
+        $this->assertSame('Open', $project->fresh()->settings['status_labels']['available']);
+        $this->assertSame(36, $project->fresh()->settings['reservation_hours']);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'project.updated', 'subject_id' => $project->id]);
+    }
+
     public function test_owner_can_create_a_unit_and_reserve_it(): void
     {
         $owner = $this->installOwner();
@@ -100,6 +174,20 @@ class InventoryManagementTest extends TestCase
         $this->actingAs($owner)->post(route('inventory.reserve', $unit, absolute: false))->assertConflict();
 
         $this->assertSame(1, Reservation::query()->where('property_unit_id', $unit->id)->where('status', 'active')->count());
+    }
+
+    public function test_project_reservation_duration_controls_the_hold_expiration(): void
+    {
+        $owner = $this->installOwner();
+        $project = $this->createProject($owner->organizations()->firstOrFail());
+        $project->update(['settings' => array_merge($project->settings, ['reservation_hours' => 36])]);
+        $unit = $this->createUnit($project);
+        $startedAt = now();
+
+        $this->actingAs($owner)->post(route('inventory.reserve', $unit, absolute: false))->assertRedirect();
+
+        $reservation = Reservation::query()->where('property_unit_id', $unit->id)->firstOrFail();
+        $this->assertTrue($reservation->reserved_until->between($startedAt->copy()->addHours(36)->subMinute(), $startedAt->copy()->addHours(36)->addMinute()));
     }
 
     public function test_expired_reservation_can_be_reclaimed_atomically(): void

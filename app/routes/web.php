@@ -51,6 +51,7 @@ Route::get('/dashboard', function () {
 Route::middleware('auth')->group(function () {
     Route::get('/inventory', [InventoryController::class, 'index'])->name('inventory.index');
     Route::post('/projects', [InventoryController::class, 'storeProject'])->name('projects.store');
+    Route::put('/projects/{project}', [InventoryController::class, 'updateProject'])->name('projects.update');
     Route::post('/projects/{project}/units', [InventoryController::class, 'storeUnit'])->name('projects.units.store');
     Route::post('/inventory/{propertyUnit}/reserve', [InventoryController::class, 'reserve'])->name('inventory.reserve');
     Route::post('/inventory/{propertyUnit}/release', [InventoryController::class, 'release'])->name('inventory.release');

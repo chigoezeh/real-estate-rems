@@ -17,14 +17,24 @@ use Inertia\Response;
 
 class InventoryController extends Controller
 {
+    private const DEFAULT_STATUS_LABELS = [
+        'available' => 'Available',
+        'reserved' => 'Reserved',
+        'under_installment' => 'Under installment',
+        'allocated' => 'Allocated',
+        'sold' => 'Sold',
+    ];
+
     public function index(Request $request): Response
     {
         $user = $request->user();
         abort_unless($user->hasPermission('inventory.view'), 403);
 
         $organizationIds = Organization::accessibleIdsFor($user, 'inventory.view');
+        $manageableOrganizationIds = Organization::accessibleIdsFor($user, 'inventory.manage');
+        $reservableOrganizationIds = Organization::accessibleIdsFor($user, 'inventory.reserve');
         $projects = Project::query()
-            ->with('organization:id,name')
+            ->with('organization:id,name,currency')
             ->withCount('units')
             ->whereIn('organization_id', $organizationIds)
             ->orderBy('name')
@@ -57,11 +67,17 @@ class InventoryController extends Controller
                 'id' => $project->id,
                 'organizationId' => $project->organization_id,
                 'organizationName' => $project->organization->name,
+                'organizationCurrency' => $project->organization->currency,
                 'name' => $project->name,
                 'code' => $project->code,
                 'location' => $project->location,
+                'description' => $project->description,
                 'titleTypes' => $project->settings['title_types'] ?? [],
+                'statusLabels' => $this->statusLabels($project->settings['status_labels'] ?? []),
+                'reservationHours' => $project->settings['reservation_hours'] ?? 24,
                 'unitsCount' => $project->units_count,
+                'canManage' => in_array($project->organization_id, $manageableOrganizationIds, true),
+                'canReserve' => in_array($project->organization_id, $reservableOrganizationIds, true),
             ])->values(),
             'selectedProjectId' => $selectedProjectId,
             'units' => $units,
@@ -94,6 +110,13 @@ class InventoryController extends Controller
             'description' => ['nullable', 'string', 'max:2000'],
             'title_types' => ['required', 'array', 'min:1', 'max:20'],
             'title_types.*' => ['required', 'string', 'distinct', 'max:80'],
+            'status_labels' => ['sometimes', 'array:available,reserved,under_installment,allocated,sold'],
+            'status_labels.available' => ['sometimes', 'required', 'string', 'max:40'],
+            'status_labels.reserved' => ['sometimes', 'required', 'string', 'max:40'],
+            'status_labels.under_installment' => ['sometimes', 'required', 'string', 'max:40'],
+            'status_labels.allocated' => ['sometimes', 'required', 'string', 'max:40'],
+            'status_labels.sold' => ['sometimes', 'required', 'string', 'max:40'],
+            'reservation_hours' => ['sometimes', 'integer', 'min:1', 'max:168'],
         ]);
 
         $organizationIds = Organization::accessibleIdsFor($user, 'inventory.manage');
@@ -105,10 +128,63 @@ class InventoryController extends Controller
             'code' => strtoupper($validated['code']),
             'location' => $validated['location'] ?? null,
             'description' => $validated['description'] ?? null,
-            'settings' => ['title_types' => array_values($validated['title_types'])],
+            'settings' => [
+                'title_types' => array_values($validated['title_types']),
+                'status_labels' => $this->statusLabels($validated['status_labels'] ?? []),
+                'reservation_hours' => (int) ($validated['reservation_hours'] ?? 24),
+            ],
         ]);
 
         $this->audit($request, $user, $project->organization_id, Project::class, $project->id, 'project.created', [
+            'name' => $project->name,
+            'code' => $project->code,
+        ]);
+
+        return redirect()->route('inventory.index', ['project_id' => $project->id]);
+    }
+
+    public function updateProject(Request $request, Project $project): RedirectResponse
+    {
+        $user = $request->user();
+        abort_unless($user->hasPermission('inventory.manage'), 403);
+        $this->ensureProjectAccess($user, $project, 'inventory.manage');
+        $request->merge(['code' => strtoupper(trim((string) $request->input('code', '')))]);
+
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'code' => [
+                'required',
+                'string',
+                'max:50',
+                'regex:/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/',
+                Rule::unique('projects', 'code')->where('organization_id', $project->organization_id)->ignore($project->id),
+            ],
+            'location' => ['nullable', 'string', 'max:255'],
+            'description' => ['nullable', 'string', 'max:2000'],
+            'title_types' => ['required', 'array', 'min:1', 'max:20'],
+            'title_types.*' => ['required', 'string', 'distinct', 'max:80'],
+            'status_labels' => ['required', 'array:available,reserved,under_installment,allocated,sold'],
+            'status_labels.available' => ['required', 'string', 'max:40'],
+            'status_labels.reserved' => ['required', 'string', 'max:40'],
+            'status_labels.under_installment' => ['required', 'string', 'max:40'],
+            'status_labels.allocated' => ['required', 'string', 'max:40'],
+            'status_labels.sold' => ['required', 'string', 'max:40'],
+            'reservation_hours' => ['required', 'integer', 'min:1', 'max:168'],
+        ]);
+
+        $project->update([
+            'name' => $validated['name'],
+            'code' => $validated['code'],
+            'location' => $validated['location'] ?? null,
+            'description' => $validated['description'] ?? null,
+            'settings' => array_merge($project->settings ?? [], [
+                'title_types' => array_values($validated['title_types']),
+                'status_labels' => $this->statusLabels($validated['status_labels']),
+                'reservation_hours' => (int) $validated['reservation_hours'],
+            ]),
+        ]);
+
+        $this->audit($request, $user, $project->organization_id, Project::class, $project->id, 'project.updated', [
             'name' => $project->name,
             'code' => $project->code,
         ]);
@@ -207,7 +283,7 @@ class InventoryController extends Controller
                 'property_unit_id' => $unit->id,
                 'reserved_by_user_id' => $user->id,
                 'status' => 'active',
-                'reserved_until' => now()->addHours(24),
+                'reserved_until' => now()->addHours((int) ($project->settings['reservation_hours'] ?? 24)),
             ]);
 
             $this->audit($request, $user, $project->organization_id, Reservation::class, $reservation->id, 'inventory.unit_reserved', [
@@ -256,6 +332,14 @@ class InventoryController extends Controller
         $organizationIds = Organization::accessibleIdsFor($user, $permission);
 
         abort_unless(in_array($project->organization_id, $organizationIds, true), 404);
+    }
+
+    /** @param array<string, string> $labels
+     * @return array<string, string>
+     */
+    private function statusLabels(array $labels): array
+    {
+        return array_merge(self::DEFAULT_STATUS_LABELS, $labels);
     }
 
     /** @return array<string, mixed> */
