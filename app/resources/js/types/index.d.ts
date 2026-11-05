@@ -15,6 +15,12 @@ export type PageProps<
 > = T & {
     auth: {
         user: User;
+        canManageUsers: boolean;
+        canViewInventory: boolean;
+        canViewClients: boolean;
+        canViewSubscriptions: boolean;
+        canViewPayments: boolean;
+            canViewInspections: boolean;
     };
     company: CompanySummary | null;
 };

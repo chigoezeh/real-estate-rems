@@ -1,8 +1,15 @@
 <?php
 
+use App\Http\Controllers\ClientController;
+use App\Http\Controllers\InspectionController;
+use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\OrganizationController;
+use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\RoleController;
 use App\Http\Controllers\SetupController;
+use App\Http\Controllers\StaffController;
+use App\Http\Controllers\SubscriptionController;
 use App\Models\AuditLog;
 use App\Models\InstallationState;
 use App\Models\Organization;
@@ -32,6 +39,7 @@ Route::get('/dashboard', function () {
         'organizationCount' => count($organizationIds),
         'staffCount' => DB::table('organization_user')
             ->whereIn('organization_id', $organizationIds)
+            ->where('status', 'active')
             ->distinct()
             ->count('user_id'),
         'recentActivity' => AuditLog::query()
@@ -45,8 +53,34 @@ Route::get('/dashboard', function () {
 })->middleware('auth')->name('dashboard');
 
 Route::middleware('auth')->group(function () {
+    Route::get('/inspections', [InspectionController::class, 'index'])->name('inspections.index');
+    Route::post('/inspections', [InspectionController::class, 'store'])->name('inspections.store');
+    Route::patch('/inspections/{inspection}', [InspectionController::class, 'update'])->name('inspections.update');
+    Route::get('/payments', [PaymentController::class, 'index'])->name('payments.index');
+    Route::post('/payments', [PaymentController::class, 'store'])->name('payments.store');
+    Route::patch('/payments/{payment}/review', [PaymentController::class, 'review'])->name('payments.review');
+    Route::get('/payments/{payment}/proof', [PaymentController::class, 'downloadProof'])->name('payments.proof');
+    Route::get('/subscriptions', [SubscriptionController::class, 'index'])->name('subscriptions.index');
+    Route::post('/subscriptions', [SubscriptionController::class, 'store'])->name('subscriptions.store');
+    Route::get('/clients', [ClientController::class, 'index'])->name('clients.index');
+    Route::post('/clients', [ClientController::class, 'store'])->name('clients.store');
+    Route::patch('/clients/{client}/kyc', [ClientController::class, 'reviewKyc'])->name('clients.kyc.review');
+    Route::get('/clients/{client}/identity-document', [ClientController::class, 'downloadIdentityDocument'])->name('clients.identity-document');
+    Route::get('/inventory', [InventoryController::class, 'index'])->name('inventory.index');
+    Route::post('/projects', [InventoryController::class, 'storeProject'])->name('projects.store');
+    Route::put('/projects/{project}', [InventoryController::class, 'updateProject'])->name('projects.update');
+    Route::post('/projects/{project}/units', [InventoryController::class, 'storeUnit'])->name('projects.units.store');
+    Route::post('/inventory/{propertyUnit}/reserve', [InventoryController::class, 'reserve'])->name('inventory.reserve');
+    Route::post('/inventory/{propertyUnit}/release', [InventoryController::class, 'release'])->name('inventory.release');
     Route::get('/organizations', [OrganizationController::class, 'index'])->name('organizations.index');
     Route::post('/organizations', [OrganizationController::class, 'store'])->name('organizations.store');
+    Route::put('/organizations/{organization}', [OrganizationController::class, 'update'])->name('organizations.update');
+    Route::get('/access/roles', [RoleController::class, 'index'])->name('roles.index');
+    Route::post('/access/roles', [RoleController::class, 'store'])->name('roles.store');
+    Route::put('/access/roles/{role}', [RoleController::class, 'update'])->name('roles.update');
+    Route::get('/staff', [StaffController::class, 'index'])->name('staff.index');
+    Route::post('/staff', [StaffController::class, 'store'])->name('staff.store');
+    Route::patch('/staff/{staff}', [StaffController::class, 'update'])->name('staff.update');
 });
 
 Route::middleware('auth')->group(function () {

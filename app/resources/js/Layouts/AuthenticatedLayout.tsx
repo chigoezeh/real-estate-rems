@@ -1,5 +1,5 @@
 import { Link, usePage } from '@inertiajs/react';
-import { Building2, ChevronDown, LayoutDashboard, LogOut, Network } from 'lucide-react';
+import { BadgeDollarSign, Building2, Boxes, CalendarDays, ChevronDown, FileUser, KeyRound, LayoutDashboard, LogOut, MapPinned, Network, ReceiptText, Users } from 'lucide-react';
 import { PropsWithChildren, ReactNode } from 'react';
 import { PageProps } from '@/types';
 
@@ -7,6 +7,15 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
     const { auth, company } = usePage<PageProps>().props;
     const user = auth.user;
     const isDashboard = route().current('dashboard');
+    const isOrganizations = route().current('organizations.*');
+    const isRoles = route().current('roles.*');
+    const isStaff = route().current('staff.*');
+    const isInventory = route().current('inventory.*') || route().current('projects.*');
+    const isClients = route().current('clients.*');
+    const isSubscriptions = route().current('subscriptions.*');
+    const isPayments = route().current('payments.*');
+    const isInspections = route().current('inspections.*');
+    const sectionName = isDashboard ? 'Overview' : isInventory ? 'Inventory' : isInspections ? 'Inspections' : isPayments ? 'Payments' : isSubscriptions ? 'Subscriptions' : isClients ? 'Clients' : isRoles ? 'Access & roles' : isStaff ? 'Staff' : isOrganizations ? 'Companies' : 'Profile';
 
     return (
         <div className="min-h-screen bg-[#f3f5ef] lg:flex">
@@ -29,9 +38,44 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
                     <Link href={route('dashboard')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isDashboard ? 'bg-[#d6f36a] font-semibold text-[#17352d]' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
                         <LayoutDashboard size={17} /> Overview
                     </Link>
-                    <Link href={route('organizations.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${!isDashboard ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                    <Link href={route('organizations.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isOrganizations ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
                         <Network size={17} /> Companies & branches
                     </Link>
+                    {auth.canViewInventory && (
+                        <Link href={route('inventory.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isInventory ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                            <Boxes size={17} /> Inventory
+                        </Link>
+                    )}
+                    {auth.canViewClients && (
+                        <Link href={route('clients.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isClients ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                            <FileUser size={17} /> Clients
+                        </Link>
+                    )}
+                    {auth.canViewSubscriptions && (
+                        <Link href={route('subscriptions.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isSubscriptions ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                            <BadgeDollarSign size={17} /> Subscriptions
+                        </Link>
+                    )}
+                    {auth.canViewPayments && (
+                        <Link href={route('payments.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isPayments ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                            <ReceiptText size={17} /> Payments
+                        </Link>
+                    )}
+                    {auth.canViewInspections && (
+                        <Link href={route('inspections.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isInspections ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                            <MapPinned size={17} /> Site inspections
+                        </Link>
+                    )}
+                    {auth.canManageUsers && (
+                        <>
+                            <Link href={route('staff.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isStaff ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                                <Users size={17} /> Staff
+                            </Link>
+                            <Link href={route('roles.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isRoles ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                                <KeyRound size={17} /> Access & roles
+                            </Link>
+                        </>
+                    )}
                 </nav>
 
                 <div className="mt-auto border-t border-white/10 pt-5">
@@ -46,7 +90,7 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
             <main className="min-w-0 flex-1">
                 <header className="flex min-h-[72px] items-center justify-between border-b border-[#dfe5df] bg-white px-5 sm:px-8 lg:px-10">
                     <div className="min-w-0">
-                        <p className="hidden text-xs text-[#8a9791] sm:block">Workspace <span className="mx-1.5">/</span> {isDashboard ? 'Overview' : 'Companies'}</p>
+                        <p className="hidden text-xs text-[#8a9791] sm:block">Workspace <span className="mx-1.5">/</span> {sectionName}</p>
                         <p className="mt-1 truncate text-sm font-semibold text-[#29483e] lg:hidden">{company?.name ?? 'REMS'}</p>
                     </div>
                     <div className="flex items-center gap-3">

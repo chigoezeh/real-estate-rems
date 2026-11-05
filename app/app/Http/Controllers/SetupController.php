@@ -79,6 +79,19 @@ class SetupController extends Controller
                 'users.manage' => 'Manage users and roles',
                 'settings.manage' => 'Manage company settings',
                 'audit.view' => 'View audit history',
+                'inventory.view' => 'View property inventory',
+                'inventory.manage' => 'Manage projects and inventory',
+                'inventory.reserve' => 'Reserve available inventory',
+                'clients.view' => 'View clients',
+                'clients.manage' => 'Manage client records',
+                'clients.kyc.review' => 'Review client KYC documents',
+                'subscriptions.view' => 'View subscriptions and installment schedules',
+                'subscriptions.manage' => 'Create and manage subscriptions',
+                'payments.view' => 'View payment ledger',
+                'payments.submit' => 'Submit payment records and proof',
+                'payments.review' => 'Approve or reject submitted payments',
+                'inspections.view' => 'View site inspection bookings',
+                'inspections.manage' => 'Schedule and manage site inspections',
             ];
 
             $permissionIds = [];
