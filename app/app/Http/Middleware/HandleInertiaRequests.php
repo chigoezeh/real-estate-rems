@@ -42,6 +42,7 @@ class HandleInertiaRequests extends Middleware
                 'canViewTenancies' => $request->user()?->hasPermission('tenancies.view') ?? false,
                 'canViewRentPayments' => $request->user()?->hasPermission('rent_payments.view') ?? false,
                 'canViewMaintenance' => $request->user()?->hasPermission('maintenance.view') ?? false,
+                'canManageCharges' => $request->user()?->hasPermission('charges.manage') ?? false,
             ],
             'company' => fn (): ?array => $request->user()?->organizations()
                 ->first(['organizations.id', 'organizations.name'])

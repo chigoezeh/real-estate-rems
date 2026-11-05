@@ -24,6 +24,7 @@ export type PageProps<
         canViewTenancies: boolean;
         canViewRentPayments: boolean;
         canViewMaintenance: boolean;
+        canManageCharges: boolean;
     };
     company: CompanySummary | null;
 };

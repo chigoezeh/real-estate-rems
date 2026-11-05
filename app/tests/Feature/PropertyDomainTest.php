@@ -23,33 +23,27 @@ class PropertyDomainTest extends TestCase
     {
         $owner = $this->installOwner();
         $organization = $owner->organizations()->firstOrFail();
-        $country = Country::create([
-            'code' => 'NG',
+        $country = Country::firstOrCreate(['code' => 'NG'], [
             'name' => 'Nigeria',
             'currency_code' => 'NGN',
             'default_timezone' => 'Africa/Lagos',
         ]);
-        $state = State::create([
-            'country_code' => $country->code,
-            'name' => 'Lagos',
-            'code' => 'NG-LA',
-        ]);
-        $province = Province::create([
-            'state_id' => $state->id,
-            'name' => 'Eti-Osa',
-            'official_type' => 'local_government_area',
-        ]);
-        $otherProvince = Province::create([
-            'state_id' => $state->id,
-            'name' => 'Ikeja',
-            'official_type' => 'local_government_area',
-        ]);
-        $city = City::create([
-            'country_code' => $country->code,
-            'state_id' => $state->id,
-            'name' => 'Lagos',
-            'place_type' => 'metropolitan_area',
-        ]);
+        $state = State::firstOrCreate(
+            ['country_code' => $country->code, 'name' => 'Lagos'],
+            ['code' => 'NG-LA'],
+        );
+        $province = Province::firstOrCreate(
+            ['state_id' => $state->id, 'name' => 'Eti-Osa'],
+            ['official_type' => 'local_government_area'],
+        );
+        $otherProvince = Province::firstOrCreate(
+            ['state_id' => $state->id, 'name' => 'Ikeja'],
+            ['official_type' => 'local_government_area'],
+        );
+        $city = City::firstOrCreate(
+            ['country_code' => $country->code, 'state_id' => $state->id, 'name' => 'Lagos'],
+            ['place_type' => 'metropolitan_area'],
+        );
         $city->provinces()->attach([$province->id, $otherProvince->id]);
 
         $project = Project::create([

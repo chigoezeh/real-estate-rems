@@ -18,7 +18,8 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
     const isTenancies = route().current('tenancies.*');
     const isRentPayments = route().current('rent-payments.*');
     const isMaintenance = route().current('maintenance.*');
-    const sectionName = isDashboard ? 'Overview' : isInventory ? 'Inventory' : isInspections ? 'Inspections' : isPayments ? 'Payments' : isRentPayments ? 'Rent payments' : isTenancies ? 'Tenancies' : isMaintenance ? 'Maintenance' : isSubscriptions ? 'Subscriptions' : isClients ? 'Clients' : isRoles ? 'Access & roles' : isStaff ? 'Staff' : isOrganizations ? 'Companies' : 'Profile';
+    const isCharges = route().current('charges.*');
+    const sectionName = isDashboard ? 'Overview' : isInventory ? 'Inventory' : isInspections ? 'Inspections' : isPayments ? 'Payments' : isRentPayments ? 'Rent payments' : isTenancies ? 'Tenancies' : isMaintenance ? 'Maintenance' : isCharges ? 'Charge policies' : isSubscriptions ? 'Subscriptions' : isClients ? 'Clients' : isRoles ? 'Access & roles' : isStaff ? 'Staff' : isOrganizations ? 'Companies' : 'Profile';
 
     return (
         <div className="min-h-screen bg-[#f3f5ef] lg:flex">
@@ -77,6 +78,11 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
                     {auth.canViewMaintenance && (
                         <Link href={route('maintenance.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isMaintenance ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
                             <Boxes size={17} /> Maintenance
+                        </Link>
+                    )}
+                    {auth.canManageCharges && (
+                        <Link href={route('charges.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isCharges ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                            <ReceiptText size={17} /> Charge policies
                         </Link>
                     )}
                     {auth.canViewInspections && (

@@ -3,10 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Models\AuditLog;
+use App\Models\City;
+use App\Models\Country;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\PropertyUnit;
+use App\Models\Province;
 use App\Models\Reservation;
+use App\Models\State;
 use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -34,7 +38,13 @@ class InventoryController extends Controller
         $manageableOrganizationIds = Organization::accessibleIdsFor($user, 'inventory.manage');
         $reservableOrganizationIds = Organization::accessibleIdsFor($user, 'inventory.reserve');
         $projects = Project::query()
-            ->with('organization:id,name,currency')
+            ->with([
+                'organization:id,name,currency',
+                'country:code,name',
+                'state:id,name',
+                'province:id,name',
+                'city:id,name',
+            ])
             ->withCount('units')
             ->whereIn('organization_id', $organizationIds)
             ->orderBy('name')
@@ -71,6 +81,13 @@ class InventoryController extends Controller
                 'name' => $project->name,
                 'code' => $project->code,
                 'location' => $project->location,
+                'countryCode' => $project->country_code,
+                'stateName' => $project->state?->name,
+                'provinceName' => $project->province?->name,
+                'cityName' => $project->city?->name,
+                'districtOrArea' => $project->district_or_area,
+                'streetAddress' => $project->street_address,
+                'postalCode' => $project->postal_code,
                 'description' => $project->description,
                 'titleTypes' => $project->settings['title_types'] ?? [],
                 'statusLabels' => $this->statusLabels($project->settings['status_labels'] ?? []),
@@ -85,6 +102,43 @@ class InventoryController extends Controller
                 ->whereIn('id', Organization::accessibleIdsFor($user, 'inventory.manage'))
                 ->orderBy('name')
                 ->get(['id', 'name']),
+            'countries' => Country::query()
+                ->where('is_active', true)
+                ->orderBy('name')
+                ->get(['code', 'name'])
+                ->map(fn (Country $country): array => ['code' => $country->code, 'name' => $country->name])
+                ->values(),
+            'states' => State::query()
+                ->with('country:code')
+                ->orderBy('name')
+                ->get(['id', 'country_code', 'name', 'subdivision_type'])
+                ->map(fn (State $state): array => [
+                    'id' => $state->id,
+                    'countryCode' => $state->country_code,
+                    'name' => $state->name,
+                    'type' => $state->subdivision_type,
+                ])
+                ->values(),
+            'provinces' => Province::query()
+                ->orderBy('name')
+                ->get(['id', 'state_id', 'name', 'official_type'])
+                ->map(fn (Province $province): array => [
+                    'id' => $province->id,
+                    'stateId' => $province->state_id,
+                    'name' => $province->name,
+                    'officialType' => $province->official_type,
+                ])
+                ->values(),
+            'cities' => City::query()
+                ->orderBy('name')
+                ->limit(5000)
+                ->get(['country_code', 'state_id', 'name'])
+                ->map(fn (City $city): array => [
+                    'countryCode' => $city->country_code,
+                    'stateId' => $city->state_id,
+                    'name' => $city->name,
+                ])
+                ->values(),
             'canManage' => $user->hasPermission('inventory.manage'),
             'canReserve' => $user->hasPermission('inventory.reserve'),
         ]);
@@ -95,6 +149,7 @@ class InventoryController extends Controller
         $user = $request->user();
         abort_unless($user->hasPermission('inventory.manage'), 403);
         $request->merge(['code' => strtoupper(trim((string) $request->input('code', '')))]);
+        $this->normalizeGeographyInput($request);
 
         $validated = $request->validate([
             'organization_id' => ['required', 'uuid', 'exists:organizations,id'],
@@ -107,6 +162,7 @@ class InventoryController extends Controller
                 Rule::unique('projects', 'code')->where('organization_id', $request->input('organization_id')),
             ],
             'location' => ['nullable', 'string', 'max:255'],
+            ...$this->geographyRules(),
             'description' => ['nullable', 'string', 'max:2000'],
             'title_types' => ['required', 'array', 'min:1', 'max:20'],
             'title_types.*' => ['required', 'string', 'distinct', 'max:80'],
@@ -122,18 +178,23 @@ class InventoryController extends Controller
         $organizationIds = Organization::accessibleIdsFor($user, 'inventory.manage');
         abort_unless(in_array($validated['organization_id'], $organizationIds, true), 404);
 
-        $project = Project::create([
-            'organization_id' => $validated['organization_id'],
-            'name' => $validated['name'],
-            'code' => strtoupper($validated['code']),
-            'location' => $validated['location'] ?? null,
-            'description' => $validated['description'] ?? null,
-            'settings' => [
-                'title_types' => array_values($validated['title_types']),
-                'status_labels' => $this->statusLabels($validated['status_labels'] ?? []),
-                'reservation_hours' => (int) ($validated['reservation_hours'] ?? 24),
-            ],
-        ]);
+        $project = DB::transaction(function () use ($validated): Project {
+            $project = Project::create([
+                'organization_id' => $validated['organization_id'],
+                'name' => $validated['name'],
+                'code' => strtoupper($validated['code']),
+                'location' => $validated['location'] ?? null,
+                'description' => $validated['description'] ?? null,
+                'settings' => [
+                    'title_types' => array_values($validated['title_types']),
+                    'status_labels' => $this->statusLabels($validated['status_labels'] ?? []),
+                    'reservation_hours' => (int) ($validated['reservation_hours'] ?? 24),
+                ],
+                ...$this->resolveProjectGeography($validated),
+            ]);
+
+            return $project;
+        });
 
         $this->audit($request, $user, $project->organization_id, Project::class, $project->id, 'project.created', [
             'name' => $project->name,
@@ -149,6 +210,7 @@ class InventoryController extends Controller
         abort_unless($user->hasPermission('inventory.manage'), 403);
         $this->ensureProjectAccess($user, $project, 'inventory.manage');
         $request->merge(['code' => strtoupper(trim((string) $request->input('code', '')))]);
+        $this->normalizeGeographyInput($request);
 
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
@@ -160,6 +222,7 @@ class InventoryController extends Controller
                 Rule::unique('projects', 'code')->where('organization_id', $project->organization_id)->ignore($project->id),
             ],
             'location' => ['nullable', 'string', 'max:255'],
+            ...$this->geographyRules(),
             'description' => ['nullable', 'string', 'max:2000'],
             'title_types' => ['required', 'array', 'min:1', 'max:20'],
             'title_types.*' => ['required', 'string', 'distinct', 'max:80'],
@@ -172,17 +235,20 @@ class InventoryController extends Controller
             'reservation_hours' => ['required', 'integer', 'min:1', 'max:168'],
         ]);
 
-        $project->update([
-            'name' => $validated['name'],
-            'code' => $validated['code'],
-            'location' => $validated['location'] ?? null,
-            'description' => $validated['description'] ?? null,
-            'settings' => array_merge($project->settings ?? [], [
-                'title_types' => array_values($validated['title_types']),
-                'status_labels' => $this->statusLabels($validated['status_labels']),
-                'reservation_hours' => (int) $validated['reservation_hours'],
-            ]),
-        ]);
+        DB::transaction(function () use ($project, $validated): void {
+            $project->update([
+                'name' => $validated['name'],
+                'code' => $validated['code'],
+                'location' => $validated['location'] ?? null,
+                'description' => $validated['description'] ?? null,
+                'settings' => array_merge($project->settings ?? [], [
+                    'title_types' => array_values($validated['title_types']),
+                    'status_labels' => $this->statusLabels($validated['status_labels']),
+                    'reservation_hours' => (int) $validated['reservation_hours'],
+                ]),
+                ...$this->resolveProjectGeography($validated),
+            ]);
+        });
 
         $this->audit($request, $user, $project->organization_id, Project::class, $project->id, 'project.updated', [
             'name' => $project->name,
@@ -334,6 +400,99 @@ class InventoryController extends Controller
         $organizationIds = Organization::accessibleIdsFor($user, $permission);
 
         abort_unless(in_array($project->organization_id, $organizationIds, true), 404);
+    }
+
+    /**
+     * @return array<string, array<int, string>|string>
+     */
+    private function geographyRules(): array
+    {
+        return [
+            'country_code' => ['nullable', 'string', 'size:2', 'exists:countries,code', 'required_with:state_name,province_name,city_name'],
+            'state_name' => ['nullable', 'string', 'max:120', 'required_with:province_name'],
+            'province_name' => ['nullable', 'string', 'max:120'],
+            'city_name' => ['nullable', 'string', 'max:160'],
+            'district_or_area' => ['nullable', 'string', 'max:160'],
+            'street_address' => ['nullable', 'string', 'max:255'],
+            'postal_code' => ['nullable', 'string', 'max:24'],
+        ];
+    }
+
+    private function normalizeGeographyInput(Request $request): void
+    {
+        if ($request->filled('country_code')) {
+            $request->merge(['country_code' => strtoupper(trim((string) $request->input('country_code')))]);
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $validated
+     * @return array<string, mixed>
+     */
+    private function resolveProjectGeography(array $validated): array
+    {
+        $countryCode = $validated['country_code'] ?? null;
+        $stateName = $this->normalizeStateName($countryCode, $validated['state_name'] ?? null);
+        $state = $countryCode !== null && $stateName !== null
+            ? State::query()->firstOrCreate(
+                ['country_code' => $countryCode, 'name' => $stateName],
+                [
+                    'official_name' => $stateName,
+                    'subdivision_type' => $countryCode === 'NG' ? 'state' : 'administrative_area',
+                ],
+            )
+            : null;
+
+        $provinceName = isset($validated['province_name']) ? trim($validated['province_name']) : null;
+        $province = $state !== null && $provinceName !== null && $provinceName !== ''
+            ? Province::query()->firstOrCreate(
+                ['state_id' => $state->id, 'name' => $provinceName],
+                [
+                    'official_type' => $countryCode === 'NG'
+                        ? ($state->code === 'FCT' ? 'area_council' : 'local_government_area')
+                        : 'administrative_area',
+                ],
+            )
+            : null;
+
+        $cityName = isset($validated['city_name']) ? trim($validated['city_name']) : null;
+        $city = $countryCode !== null && $cityName !== null && $cityName !== ''
+            ? City::query()->firstOrCreate(
+                [
+                    'country_code' => $countryCode,
+                    'state_id' => $state?->id,
+                    'name' => $cityName,
+                ],
+                ['place_type' => 'city'],
+            )
+            : null;
+
+        if ($city !== null && $province !== null) {
+            $city->provinces()->syncWithoutDetaching([$province->id]);
+        }
+
+        return [
+            'country_code' => $countryCode,
+            'state_id' => $state?->id,
+            'province_id' => $province?->id,
+            'city_id' => $city?->id,
+            'district_or_area' => $validated['district_or_area'] ?? null,
+            'street_address' => $validated['street_address'] ?? null,
+            'postal_code' => $validated['postal_code'] ?? null,
+        ];
+    }
+
+    private function normalizeStateName(?string $countryCode, ?string $stateName): ?string
+    {
+        if ($stateName === null || trim($stateName) === '') {
+            return null;
+        }
+
+        if ($countryCode === 'NG' && in_array(strtoupper(trim($stateName)), ['ABUJA', 'FCT', 'FEDERAL CAPITAL TERRITORY'], true)) {
+            return 'Federal Capital Territory';
+        }
+
+        return trim($stateName);
     }
 
     /** @param array<string, string> $labels

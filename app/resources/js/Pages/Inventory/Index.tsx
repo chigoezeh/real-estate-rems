@@ -5,6 +5,10 @@ import { Boxes, Building2, ChevronDown, Clock3, MapPin, Plus, RotateCcw, Setting
 import { FormEventHandler, useMemo, useState } from 'react';
 
 type Organization = { id: string; name: string };
+type Country = { code: string; name: string };
+type StateOption = { id: string; countryCode: string; name: string; type: string };
+type ProvinceOption = { id: string; stateId: string; name: string; officialType: string | null };
+type CityOption = { countryCode: string; stateId: string | null; name: string };
 type Project = {
     id: string;
     organizationId: string;
@@ -13,6 +17,13 @@ type Project = {
     name: string;
     code: string;
     location: string | null;
+    countryCode: string | null;
+    stateName: string | null;
+    provinceName: string | null;
+    cityName: string | null;
+    districtOrArea: string | null;
+    streetAddress: string | null;
+    postalCode: string | null;
     description: string | null;
     titleTypes: string[];
     statusLabels: Record<InventoryStatus, string>;
@@ -46,6 +57,10 @@ type Props = {
     selectedProjectId: string | null;
     units: Unit[];
     organizations: Organization[];
+    countries: Country[];
+    states: StateOption[];
+    provinces: ProvinceOption[];
+    cities: CityOption[];
     canManage: boolean;
     canReserve: boolean;
 };
@@ -55,6 +70,13 @@ type ProjectForm = {
     name: string;
     code: string;
     location: string;
+    country_code: string;
+    state_name: string;
+    province_name: string;
+    city_name: string;
+    district_or_area: string;
+    street_address: string;
+    postal_code: string;
     description: string;
     title_types: string[];
     status_labels: Record<InventoryStatus, string>;
@@ -100,7 +122,7 @@ const defaultStatusLabels: Record<InventoryStatus, string> = {
     sold: 'Sold',
 };
 
-export default function Index({ projects, selectedProjectId, units, organizations, canManage, canReserve }: Props) {
+export default function Index({ projects, selectedProjectId, units, organizations, countries, states, provinces, cities, canManage, canReserve }: Props) {
     const [isAddingProject, setIsAddingProject] = useState(false);
     const [isAddingUnit, setIsAddingUnit] = useState(false);
     const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
@@ -119,6 +141,13 @@ export default function Index({ projects, selectedProjectId, units, organization
         name: '',
         code: '',
         location: '',
+        country_code: 'NG',
+        state_name: '',
+        province_name: '',
+        city_name: '',
+        district_or_area: '',
+        street_address: '',
+        postal_code: '',
         description: '',
         title_types: ['Certificate of Occupancy', 'Governor Consent', 'Excision'],
         status_labels: defaultStatusLabels,
@@ -134,6 +163,13 @@ export default function Index({ projects, selectedProjectId, units, organization
             name: project?.name ?? '',
             code: project?.code ?? '',
             location: project?.location ?? '',
+            country_code: project ? project.countryCode ?? '' : (countries.some((country) => country.code === 'NG') ? 'NG' : countries[0]?.code ?? ''),
+            state_name: project?.stateName ?? '',
+            province_name: project?.provinceName ?? '',
+            city_name: project?.cityName ?? '',
+            district_or_area: project?.districtOrArea ?? '',
+            street_address: project?.streetAddress ?? '',
+            postal_code: project?.postalCode ?? '',
             description: project?.description ?? '',
             title_types: project?.titleTypes ?? ['Certificate of Occupancy', 'Governor Consent', 'Excision'],
             status_labels: project?.statusLabels ?? defaultStatusLabels,
@@ -180,6 +216,12 @@ export default function Index({ projects, selectedProjectId, units, organization
         : unit.status === 'reserved'
             ? 'bg-[#f8f2dc] text-[#756128]'
             : 'bg-[#f1ecea] text-[#76554d]';
+    const formStates = states.filter((state) => state.countryCode === projectForm.data.country_code);
+    const selectedState = formStates.find((state) => state.name.toLowerCase() === projectForm.data.state_name.trim().toLowerCase());
+    const formProvinces = provinces.filter((province) => province.stateId === selectedState?.id);
+    const formCities = cities.filter((city) => city.countryCode === projectForm.data.country_code && (
+        selectedState ? city.stateId === selectedState.id : true
+    ));
 
     return (
         <AuthenticatedLayout>
@@ -212,7 +254,7 @@ export default function Index({ projects, selectedProjectId, units, organization
                                     <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#718078]" />
                                 </div>
                             </div>
-                            {selectedProject?.location && <p className="flex items-center gap-2 text-sm text-[#687970]"><MapPin size={16} /> {selectedProject.location}</p>}
+                            {(selectedProject?.cityName || selectedProject?.provinceName || selectedProject?.stateName || selectedProject?.location) && <p className="flex items-center gap-2 text-sm text-[#687970]"><MapPin size={16} /> {[selectedProject.cityName, selectedProject.provinceName, selectedProject.stateName, selectedProject.location].filter(Boolean).join(' · ')}</p>}
                         </div>
 
                         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -281,6 +323,35 @@ export default function Index({ projects, selectedProjectId, units, organization
                         <div className="grid gap-4 sm:grid-cols-2">
                             <Field label="Project name" id="project-name" value={projectForm.data.name} onChange={(value) => projectForm.setData('name', value)} error={projectForm.errors.name} />
                             <Field label="Project code" id="project-code" value={projectForm.data.code} onChange={(value) => projectForm.setData('code', value)} error={projectForm.errors.code} />
+                            <div>
+                                <label htmlFor="project-country" className="field-label">Country</label>
+                                <Select id="project-country" value={projectForm.data.country_code} onChange={(value) => projectForm.setData((current) => ({ ...current, country_code: value, state_name: '', province_name: '', city_name: '' }))}>
+                                    <option value="">Select a country</option>
+                                    {countries.map((country) => <option key={country.code} value={country.code}>{country.name}</option>)}
+                                </Select>
+                                <InputError message={projectForm.errors.country_code} className="mt-2" />
+                            </div>
+                            <div>
+                                <label htmlFor="project-state" className="field-label">State / first-level area</label>
+                                <input id="project-state" list="project-state-options" value={projectForm.data.state_name} onChange={(event) => projectForm.setData((current) => ({ ...current, state_name: event.target.value, province_name: '', city_name: '' }))} className="field-input" />
+                                <datalist id="project-state-options">{formStates.map((state) => <option key={state.id} value={state.name} />)}</datalist>
+                                <InputError message={projectForm.errors.state_name} className="mt-2" />
+                            </div>
+                            <div>
+                                <label htmlFor="project-province" className="field-label">Province / LGA / Area Council</label>
+                                <input id="project-province" list="project-province-options" value={projectForm.data.province_name} onChange={(event) => projectForm.setData('province_name', event.target.value)} className="field-input" />
+                                <datalist id="project-province-options">{formProvinces.map((province) => <option key={province.id} value={province.name} />)}</datalist>
+                                <InputError message={projectForm.errors.province_name} className="mt-2" />
+                            </div>
+                            <div>
+                                <label htmlFor="project-city" className="field-label">City / locality</label>
+                                <input id="project-city" list="project-city-options" value={projectForm.data.city_name} onChange={(event) => projectForm.setData('city_name', event.target.value)} className="field-input" />
+                                <datalist id="project-city-options">{formCities.map((city) => <option key={`${city.countryCode}-${city.stateId ?? ''}-${city.name}`} value={city.name} />)}</datalist>
+                                <InputError message={projectForm.errors.city_name} className="mt-2" />
+                            </div>
+                            <Field label="District / area" id="project-district" value={projectForm.data.district_or_area} onChange={(value) => projectForm.setData('district_or_area', value)} error={projectForm.errors.district_or_area} />
+                            <Field label="Street address" id="project-street" value={projectForm.data.street_address} onChange={(value) => projectForm.setData('street_address', value)} error={projectForm.errors.street_address} />
+                            <Field label="Postal code" id="project-postal-code" value={projectForm.data.postal_code} onChange={(value) => projectForm.setData('postal_code', value)} error={projectForm.errors.postal_code} />
                             <Field label="Location" id="project-location" value={projectForm.data.location} onChange={(value) => projectForm.setData('location', value)} error={projectForm.errors.location} />
                             <Field label="Title types" id="project-title-types" value={projectForm.data.title_types.join(', ')} onChange={(value) => projectForm.setData('title_types', [...new Set(value.split(',').map((titleType) => titleType.trim()).filter(Boolean))])} error={projectForm.errors.title_types} hint="Separate each configurable title type with a comma." />
                             <Field label="Reservation duration (hours)" id="project-reservation-hours" type="number" min="1" max="168" value={projectForm.data.reservation_hours} onChange={(value) => projectForm.setData('reservation_hours', value)} error={projectForm.errors.reservation_hours} hint="Between 1 and 168 hours." />

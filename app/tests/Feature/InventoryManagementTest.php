@@ -16,7 +16,7 @@ class InventoryManagementTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_owner_can_create_a_project_with_custom_title_types(): void
+    public function test_owner_can_create_a_project_with_geography_and_custom_title_types(): void
     {
         $owner = $this->installOwner();
         $organization = $owner->organizations()->firstOrFail();
@@ -26,11 +26,22 @@ class InventoryManagementTest extends TestCase
             'name' => 'Harbour View',
             'code' => 'hv-01',
             'location' => 'Lagos',
+            'country_code' => 'NG',
+            'state_name' => 'Lagos',
+            'province_name' => 'Ikeja',
+            'city_name' => 'Lekki',
+            'district_or_area' => 'Lekki Phase 1',
+            'street_address' => '12 Admiralty Way',
             'title_types' => ['Governor Consent', 'Registered Survey'],
         ])->assertRedirect();
 
         $project = Project::query()->where('code', 'HV-01')->firstOrFail();
         $this->assertSame(['Governor Consent', 'Registered Survey'], $project->settings['title_types']);
+        $this->assertSame('NG', $project->country_code);
+        $this->assertSame('Lagos', $project->state->name);
+        $this->assertSame('Ikeja', $project->province->name);
+        $this->assertSame('Lekki', $project->city->name);
+        $this->assertSame('Lekki Phase 1', $project->district_or_area);
         $this->assertDatabaseHas('audit_logs', ['action' => 'project.created', 'subject_id' => $project->id]);
     }
 

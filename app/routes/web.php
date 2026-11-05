@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\ClientController;
+use App\Http\Controllers\ChargeController;
 use App\Http\Controllers\InspectionController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\MaintenanceController;
@@ -71,6 +72,9 @@ Route::middleware('auth')->group(function () {
     Route::post('/maintenance/requests/{maintenanceRequest}/work-orders', [MaintenanceController::class, 'storeWorkOrder'])->name('maintenance.requests.work-orders.store');
     Route::patch('/maintenance/work-orders/{maintenanceWorkOrder}/approve', [MaintenanceController::class, 'approveWorkOrder'])->name('maintenance.work-orders.approve');
     Route::patch('/maintenance/work-orders/{maintenanceWorkOrder}/complete', [MaintenanceController::class, 'completeWorkOrder'])->name('maintenance.work-orders.complete');
+    Route::get('/charges', [ChargeController::class, 'index'])->name('charges.index');
+    Route::post('/charges', [ChargeController::class, 'store'])->name('charges.store');
+    Route::put('/charges/{organizationChargeType}', [ChargeController::class, 'update'])->name('charges.update');
     Route::get('/payments', [PaymentController::class, 'index'])->name('payments.index');
     Route::post('/payments', [PaymentController::class, 'store'])->name('payments.store');
     Route::patch('/payments/{payment}/review', [PaymentController::class, 'review'])->name('payments.review');

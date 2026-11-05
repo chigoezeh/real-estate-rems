@@ -8,6 +8,7 @@ use App\Models\Organization;
 use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
+use Database\Seeders\GeographySeeder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -48,6 +49,8 @@ class SetupController extends Controller
             if ($installationState->is_installed) {
                 return null;
             }
+
+            app(GeographySeeder::class)->run();
 
             $organization = Organization::create([
                 'name' => $validated['organization_name'],

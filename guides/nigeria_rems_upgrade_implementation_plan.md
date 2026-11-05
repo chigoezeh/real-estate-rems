@@ -7,20 +7,16 @@
 
 ## 0.1 Implementation checkpoint
 
-The initial schema and a first usable rental/maintenance workflow increment are in place:
+The foundation and first usable sales, rental, rent-payment, and maintenance workflows are in place. The latest increment added:
 
-- Normalized country, state, province, city, and city-to-province relationship tables and Eloquent models.
-- Project location/developer fields, property prototypes and Nigeria-specific property identifiers, amenities/features, and title-document verification records.
-- Company-scoped charge definitions, tenancy/rent schedule/payment allocation tables, maintenance request/work-order tables, and their initial models.
-- A transactional rent-payment review service that locks rent schedules, validates allocations against approved balances, records review audit events, and prevents over-allocation.
-- Shared exact minor-unit arithmetic used by the existing sales subscription/payment controllers.
-- Rental listing controls on inventory, tenancy draft creation/activation with overlap checks, and rent/service-charge/deposit schedule generation.
-- Permission-scoped rent payment submission, private proof downloads, pending-balance reservations, and approval/rejection.
-- Permission-scoped maintenance request and work-order creation, approval, completion, and audit events.
-- Rental and maintenance permissions for new installations and existing owner roles, while preserving organization hierarchy access.
-- Feature tests for tenancy scheduling, rent payment review and balance limits, maintenance work orders, alongside the geography/property and money tests.
+- Country names sourced from Symfony Intl and an idempotent Nigeria geography import: 37 first-level subdivisions and 774 LGAs/FCT Area Councils, with source version, license, and import provenance recorded.
+- Project country/state/province/city and address fields, with location selection supporting existing records and creation of new city/locality records.
+- A company-scoped charge-policy catalog and editor covering classification, fixed/percentage/per-area/manual-quote methods, applicability, recurring status, effective dates, and audited activation/update. Policies are not yet applied to sale or tenancy calculations; existing transactions still use their current fee inputs.
+- Feature coverage for geography import idempotency, project locations, and charge-policy authorization, validation, audit, and organization isolation.
 
-**Still to implement:** traceable reference-geography imports and location selectors; charge-policy administration and wiring configurable charges into sale and rental workflows; tenancy agreements, renewals, notices, terminations, deposit accounting, arrears, and tenant self-service; richer maintenance evidence/vendor controls and policy-based approval thresholds; the remaining sales/commission/reporting workflows; and migration-history consolidation. The original migrations have not been deleted or reset; the new tables are currently added through forward migrations. The current workflow is a foundation, not a complete release.
+Earlier increments added the normalized geography/property/title schema, exact minor-unit money handling, rental listing and tenancy draft/activation, rent schedules and proof review, maintenance work orders, permission scoping, and their feature tests. Parent/child organization access remains supported.
+
+**Still to implement:** apply configurable charge policies to sales and rental contracts with immutable transaction-time snapshots; seed or curate a reusable city/locality reference catalog beyond user-created entries; complete tenancy agreements, renewals, notices, terminations, deposit accounting, arrears, and tenant self-service; add richer maintenance evidence/vendor controls and policy-based approval thresholds; complete sales allocation, commissions, notifications, and reporting; and consolidate migration history. Migrations remain additive; no database reset has been run. Symfony components were updated to security-patched 7.4.23 releases; the latest Composer audit is clear. Validation passes: 77 Laravel tests (497 assertions), Pint, and the production TypeScript/Vite build. This is a staged foundation, not a complete release.
 
 ## 1. Product decisions
 
