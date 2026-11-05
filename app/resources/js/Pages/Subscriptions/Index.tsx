@@ -5,8 +5,16 @@ import { BadgeDollarSign, CalendarDays, FileSpreadsheet, Plus, ReceiptText, User
 import { FormEventHandler, useMemo, useState } from 'react';
 
 type Client = { id: string; organizationId: string; fullName: string; phone: string };
-type Unit = { id: string; label: string; status: string; effectivePrice: string };
-type Project = { id: string; organizationId: string; organizationName: string; currency: string; name: string; units: Unit[] };
+type Unit = { id: string; label: string; status: string; effectivePrice: string; areaSqm: string | null };
+type ChargePolicy = {
+    id: string;
+    name: string;
+    category: string;
+    calculationMethod: string;
+    amount: string;
+    isRecurring: boolean;
+};
+type Project = { id: string; organizationId: string; organizationName: string; currency: string; name: string; units: Unit[]; chargePolicies: ChargePolicy[] };
 type Subscription = {
     id: string;
     number: string;
@@ -16,7 +24,8 @@ type Subscription = {
     unitCode: string;
     paymentPlanMonths: number;
     landPrice: string;
-    statutoryFees: string;
+    additionalChargesTotal: string;
+    charges: Array<{ name: string; total_amount: string }>;
     status: string;
     createdAt: string | null;
 };
@@ -27,6 +36,7 @@ type SubscriptionForm = {
     development_fee: string;
     deed_fee: string;
     survey_fee: string;
+    charge_quotes: Record<string, string>;
 };
 type Props = { subscriptions: Subscription[]; clients: Client[]; projects: Project[]; canManage: boolean };
 
@@ -37,6 +47,7 @@ const emptyForm = (): SubscriptionForm => ({
     development_fee: '0',
     deed_fee: '0',
     survey_fee: '0',
+    charge_quotes: {},
 });
 
 const formatMoney = (amount: string | number, currency: string): string => new Intl.NumberFormat('en-NG', {
@@ -62,6 +73,7 @@ export default function Index({ subscriptions, clients, projects, canManage }: P
             ...current,
             client_id: clients.find((client) => client.organizationId === project?.organizationId)?.id ?? '',
             property_unit_id: project?.units.find((unit) => unit.status === 'available')?.id ?? '',
+            charge_quotes: {},
         }));
     };
 
@@ -89,14 +101,14 @@ export default function Index({ subscriptions, clients, projects, canManage }: P
     };
 
     const selectedUnit = selectedProject?.units.find((unit) => unit.id === data.property_unit_id);
-    const estimatedStatutoryTotal = Number(data.development_fee || 0) + Number(data.deed_fee || 0) + Number(data.survey_fee || 0);
+    const activeChargePolicies = selectedProject?.chargePolicies ?? [];
 
     return (
         <AuthenticatedLayout>
             <Head title="Subscriptions" />
             <div className="space-y-8">
                 <div className="flex flex-col gap-5 border-b border-[#dfe5df] pb-6 sm:flex-row sm:items-end sm:justify-between">
-                    <div><p className="eyebrow">Sales & payment plans</p><h1 className="page-title">Subscriptions</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-[#64756e]">Track client purchases, land installments, and statutory fee schedules separately.</p></div>
+                    <div><p className="eyebrow">Sales & payment plans</p><h1 className="page-title">Subscriptions</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-[#64756e]">Track client purchases, land installments, and company-configured charge schedules.</p></div>
                     {canManage && <button type="button" onClick={openForm} disabled={projects.length === 0 || clients.length === 0} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#17352d] px-4 text-sm font-semibold text-white transition hover:bg-[#244b40] disabled:cursor-not-allowed disabled:opacity-50"><Plus size={17} /> New subscription</button>}
                 </div>
 
@@ -117,7 +129,7 @@ export default function Index({ subscriptions, clients, projects, canManage }: P
                                 <td className="px-5 py-4"><p className="text-sm font-medium text-[#29483e]">{subscription.clientName}</p><p className="mt-1 text-xs text-[#7b8983]">{subscription.clientPhone}</p></td>
                                 <td className="px-5 py-4"><p className="text-sm text-[#4c6259]">{subscription.projectName}</p><p className="mt-1 text-xs text-[#7b8983]">{subscription.unitCode}</p></td>
                                 <td className="px-5 py-4 text-sm text-[#4c6259]">{subscription.paymentPlanMonths === 1 ? 'Outright' : `${subscription.paymentPlanMonths} months`}</td>
-                                <td className="px-5 py-4 text-right text-sm font-medium text-[#29483e]">{formatMoney(subscription.landPrice, projects[0]?.currency ?? 'NGN')}<p className="mt-1 text-xs font-normal text-[#7b8983]">Fees {formatMoney(subscription.statutoryFees, projects[0]?.currency ?? 'NGN')}</p></td>
+                                <td className="px-5 py-4 text-right text-sm font-medium text-[#29483e]">{formatMoney(subscription.landPrice, projects[0]?.currency ?? 'NGN')}<p className="mt-1 text-xs font-normal text-[#7b8983]">Additional charges {formatMoney(subscription.additionalChargesTotal, projects[0]?.currency ?? 'NGN')}</p>{subscription.charges.length > 0 && <p className="mt-1 max-w-56 truncate text-xs font-normal text-[#7b8983]" title={subscription.charges.map((charge) => charge.name).join(', ')}>{subscription.charges.map((charge) => charge.name).join(', ')}</p>}</td>
                                 <td className="px-5 py-4 text-right sm:px-7"><span className="rounded-full bg-[#edf4eb] px-2.5 py-1 text-xs font-medium capitalize text-[#315447]">{subscription.status}</span></td>
                             </tr>)}
                         </tbody>
@@ -139,11 +151,35 @@ export default function Index({ subscriptions, clients, projects, canManage }: P
                                 <div className="flex items-end rounded-lg bg-[#f8faf6] px-4 py-3"><div><p className="text-xs text-[#73827d]">Land price snapshot</p><p className="mt-1 text-sm font-semibold text-[#29483e]">{selectedUnit ? formatMoney(selectedUnit.effectivePrice, selectedProject?.currency ?? 'NGN') : 'Select a property'}</p></div></div>
                             </div>
                             <fieldset className="space-y-4 border-t border-[#e7ece6] pt-5">
-                                <legend className="field-label">Statutory fees, tracked separately</legend>
-                                <div className="grid gap-4 sm:grid-cols-3">
-                                    {[['development_fee', 'Development levy'], ['deed_fee', 'Deed preparation'], ['survey_fee', 'Survey plan']].map(([field, label]) => <div key={field}><label htmlFor={field} className="field-label">{label}</label><input id={field} type="number" min="0" step="0.01" value={data[field as keyof SubscriptionForm] as string} onChange={(event) => setData(field as 'development_fee' | 'deed_fee' | 'survey_fee', event.target.value)} className="field-input" /><InputError message={errors[field as keyof typeof errors]} className="mt-2" /></div>)}
-                                </div>
-                                <p className="text-sm text-[#64756e]">Total statutory fees: <strong className="text-[#29483e]">{formatMoney(estimatedStatutoryTotal, selectedProject?.currency ?? 'NGN')}</strong></p>
+                                <legend className="field-label">{activeChargePolicies.length > 0 ? 'Active company charge policies' : 'Manually entered charges'}</legend>
+                                {activeChargePolicies.length > 0 ? (
+                                    <div className="space-y-3">
+                                        {activeChargePolicies.map((policy) => {
+                                            const methodDescription = policy.calculationMethod === 'fixed'
+                                                ? `${formatMoney(policy.amount, selectedProject?.currency ?? 'NGN')} fixed amount`
+                                                : policy.calculationMethod === 'percentage'
+                                                    ? `${policy.amount}% of the land price`
+                                                    : policy.calculationMethod === 'per_area'
+                                                        ? `${formatMoney(policy.amount, selectedProject?.currency ?? 'NGN')} per m²${selectedUnit?.areaSqm ? ` · ${selectedUnit.areaSqm} m²` : ''}`
+                                                        : 'Enter a contract-specific quote';
+                                            return (
+                                                <div key={policy.id} className="grid gap-3 rounded-lg border border-[#e7ece6] p-4 sm:grid-cols-[1fr_auto] sm:items-center">
+                                                    <div><p className="text-sm font-medium text-[#29483e]">{policy.name}</p><p className="mt-1 text-xs text-[#73827d]">{methodDescription}{policy.isRecurring ? ' · repeats each installment' : ' · one-time amount split across the plan'}</p></div>
+                                                    {policy.calculationMethod === 'manual_quote' && <div><label htmlFor={`charge-quote-${policy.id}`} className="field-label">Quote ({selectedProject?.currency ?? 'NGN'})</label><input id={`charge-quote-${policy.id}`} type="number" min="0" step="0.01" required value={data.charge_quotes[policy.id] ?? ''} onChange={(event) => setData('charge_quotes', { ...data.charge_quotes, [policy.id]: event.target.value })} className="field-input sm:w-48" /></div>}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                ) : (
+                                    <>
+                                        <p className="text-sm text-[#64756e]">No active sale policies are configured for this organization. These amounts remain contract-specific and are split across the payment plan.</p>
+                                        <div className="grid gap-4 sm:grid-cols-3">
+                                            {[['development_fee', 'Development levy'], ['deed_fee', 'Deed preparation'], ['survey_fee', 'Survey plan']].map(([field, label]) => <div key={field}><label htmlFor={field} className="field-label">{label}</label><input id={field} type="number" min="0" step="0.01" value={data[field as keyof SubscriptionForm] as string} onChange={(event) => setData(field as 'development_fee' | 'deed_fee' | 'survey_fee', event.target.value)} className="field-input" /><InputError message={errors[field as keyof typeof errors]} className="mt-2" /></div>)}
+                                        </div>
+                                    </>
+                                )}
+                                {Object.entries(errors).filter(([key]) => key.startsWith('charge_quotes.')).map(([key, message]) => <InputError key={key} message={message} />)}
+                                {errors.charge_quotes && <InputError message={errors.charge_quotes} />}
                             </fieldset>
                             <div className="flex justify-end gap-3 border-t border-[#e7ece6] pt-5"><button type="button" onClick={closeForm} className="h-10 rounded-lg px-4 text-sm font-medium text-[#5f7169] hover:bg-[#f3f5ef]">Cancel</button><button type="submit" disabled={processing || !data.client_id || !data.property_unit_id} className="h-10 rounded-lg bg-[#17352d] px-4 text-sm font-semibold text-white hover:bg-[#244b40] disabled:opacity-60">{processing ? 'Saving…' : 'Create subscription'}</button></div>
                         </form>

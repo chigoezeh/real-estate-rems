@@ -10,6 +10,7 @@ type Payment = {
     subscriptionNumber: string;
     clientName: string;
     category: string;
+    chargeName?: string | null;
     installmentNumber: number;
     amount: string;
     paymentMethod: string;
@@ -27,6 +28,7 @@ type Schedule = {
     subscriptionNumber: string;
     clientName: string;
     category: string;
+    chargeName: string | null;
     installmentNumber: number;
     dueDate: string;
     amount: string;
@@ -100,7 +102,7 @@ export default function Index({ payments, schedules, canSubmit, canReview }: Pro
                         <tbody className="divide-y divide-[#edf0ec]">
                             {payments.map((payment) => <tr key={payment.id} className="align-top hover:bg-[#fbfcfa]">
                                 <td className="px-5 py-4 sm:px-7"><p className="text-sm font-semibold text-[#233c33]">{payment.clientName}</p><p className="mt-1 text-xs text-[#7b8983]">{payment.subscriptionNumber}</p></td>
-                                <td className="px-5 py-4"><p className="text-sm capitalize text-[#4c6259]">{label(payment.category)} · #{payment.installmentNumber}</p><p className="mt-1 text-xs text-[#7b8983]">{label(payment.paymentMethod)}{payment.transactionReference ? ` · ${payment.transactionReference}` : ''}</p></td>
+                                <td className="px-5 py-4"><p className="text-sm capitalize text-[#4c6259]">{payment.chargeName ?? label(payment.category)} · #{payment.installmentNumber}</p><p className="mt-1 text-xs text-[#7b8983]">{label(payment.paymentMethod)}{payment.transactionReference ? ` · ${payment.transactionReference}` : ''}</p></td>
                                 <td className="px-5 py-4"><p className="text-sm text-[#4c6259]">{payment.createdAt ? new Date(payment.createdAt).toLocaleDateString() : '—'}</p><a href={route('payments.proof', payment.id)} className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-[#42685a] hover:text-[#17352d]"><FileText size={13} /> View proof</a></td>
                                 <td className="px-5 py-4 text-right text-sm font-semibold text-[#29483e]">{formatMoney(payment.amount, payment.currency)}</td>
                                 <td className="px-5 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium capitalize ${payment.status === 'approved' ? 'bg-[#edf4eb] text-[#315447]' : payment.status === 'rejected' ? 'bg-[#fae9e5] text-[#9a4332]' : 'bg-[#f7f1e4] text-[#8a672c]'}`}>{payment.status}</span>{payment.rejectionReason && <p className="mt-1 max-w-48 text-xs text-[#8c5144]">{payment.rejectionReason}</p>}</td>
@@ -116,7 +118,7 @@ export default function Index({ payments, schedules, canSubmit, canReview }: Pro
                 <section role="dialog" aria-modal="true" aria-labelledby="payment-dialog-title" className="max-h-full w-full max-w-xl overflow-y-auto rounded-xl bg-white p-6 shadow-2xl sm:p-8">
                     <div className="flex items-start justify-between gap-5"><div><p className="eyebrow">Payment evidence</p><h2 id="payment-dialog-title" className="mt-2 font-display text-2xl text-[#18342c]">Record payment</h2></div><button type="button" onClick={closeForm} aria-label="Close dialog" className="grid size-9 place-items-center rounded-lg text-[#6d7d76] hover:bg-[#f1f4ef]"><X size={18} /></button></div>
                     <form onSubmit={submitPayment} className="mt-7 space-y-5">
-                        <div><label htmlFor="installment_schedule_id" className="field-label">Installment</label><select id="installment_schedule_id" value={paymentForm.data.installment_schedule_id} onChange={(event) => paymentForm.setData('installment_schedule_id', event.target.value)} className="field-input"><option value="">Select a scheduled fee</option>{schedules.map((schedule) => <option key={schedule.id} value={schedule.id}>{schedule.clientName} · {schedule.subscriptionNumber} · {label(schedule.category)} #{schedule.installmentNumber} · outstanding {formatMoney(schedule.outstanding, schedule.currency)}</option>)}</select><InputError message={paymentForm.errors.installment_schedule_id} className="mt-2" /></div>
+                        <div><label htmlFor="installment_schedule_id" className="field-label">Installment</label><select id="installment_schedule_id" value={paymentForm.data.installment_schedule_id} onChange={(event) => paymentForm.setData('installment_schedule_id', event.target.value)} className="field-input"><option value="">Select a scheduled fee</option>{schedules.map((schedule) => <option key={schedule.id} value={schedule.id}>{schedule.clientName} · {schedule.subscriptionNumber} · {schedule.chargeName ?? label(schedule.category)} #{schedule.installmentNumber} · outstanding {formatMoney(schedule.outstanding, schedule.currency)}</option>)}</select><InputError message={paymentForm.errors.installment_schedule_id} className="mt-2" /></div>
                         {selectedSchedule && <p className="rounded-lg bg-[#f8faf6] px-4 py-3 text-sm text-[#53675e]">Outstanding balance: <strong className="text-[#29483e]">{formatMoney(selectedSchedule.outstanding, selectedSchedule.currency)}</strong></p>}
                         <div className="grid gap-4 sm:grid-cols-2"><div><label htmlFor="amount" className="field-label">Amount</label><input id="amount" type="number" min="0.01" max={selectedSchedule?.outstanding} step="0.01" value={paymentForm.data.amount} onChange={(event) => paymentForm.setData('amount', event.target.value)} className="field-input" /><InputError message={paymentForm.errors.amount} className="mt-2" /></div><div><label htmlFor="payment_method" className="field-label">Payment method</label><select id="payment_method" value={paymentForm.data.payment_method} onChange={(event) => paymentForm.setData('payment_method', event.target.value as PaymentForm['payment_method'])} className="field-input"><option value="bank_transfer">Bank transfer</option><option value="cash_deposit">Cash deposit</option><option value="cheque">Cheque</option><option value="other">Other</option></select><InputError message={paymentForm.errors.payment_method} className="mt-2" /></div></div>
                         <div><label htmlFor="transaction_reference" className="field-label">Transaction reference</label><input id="transaction_reference" value={paymentForm.data.transaction_reference} onChange={(event) => paymentForm.setData('transaction_reference', event.target.value)} className="field-input" /><InputError message={paymentForm.errors.transaction_reference} className="mt-2" /></div>

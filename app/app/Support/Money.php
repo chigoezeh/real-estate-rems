@@ -51,4 +51,35 @@ final class Money
 
         return ($whole * $basisPoints) + intdiv(($remainder * $basisPoints) + 5000, 10000);
     }
+
+    public static function multiplyByInteger(int $amount, int $quantity): int
+    {
+        if ($amount < 0 || $quantity < 0) {
+            throw new InvalidArgumentException('Money amount and quantity cannot be negative.');
+        }
+
+        if ($amount > 0 && $quantity > intdiv(PHP_INT_MAX, $amount)) {
+            throw new OverflowException('Money calculation exceeds the supported range.');
+        }
+
+        return $amount * $quantity;
+    }
+
+    public static function perArea(int $rate, string|int $area): int
+    {
+        if ($rate < 0) {
+            throw new InvalidArgumentException('Money rate cannot be negative.');
+        }
+
+        $areaHundredths = self::toMinorUnits($area);
+        if ($rate === 0 || $areaHundredths === 0) {
+            return 0;
+        }
+
+        if ($rate > intdiv(PHP_INT_MAX - 50, $areaHundredths)) {
+            throw new OverflowException('Per-area calculation exceeds the supported range.');
+        }
+
+        return intdiv(($rate * $areaHundredths) + 50, 100);
+    }
 }

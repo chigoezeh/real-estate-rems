@@ -50,6 +50,7 @@ class RentPaymentController extends Controller
                     'tenantName' => $schedule->tenancy->tenant->full_name,
                     'property' => $schedule->tenancy->propertyUnit->project->name.' · '.trim($schedule->tenancy->propertyUnit->phase.' '.$schedule->tenancy->propertyUnit->block.' '.$schedule->tenancy->propertyUnit->code),
                     'category' => $schedule->category,
+                    'chargeName' => $schedule->charge_name_snapshot,
                     'dueOn' => $schedule->due_on->toDateString(),
                     'amountDue' => $schedule->amount_due,
                     'amountPaid' => Money::fromMinorUnits($paidCents),

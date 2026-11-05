@@ -2,10 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Domain\Services\ChargePolicyService;
 use App\Models\AuditLog;
 use App\Models\Client;
 use App\Models\InstallmentSchedule;
 use App\Models\Organization;
+use App\Models\OrganizationChargeType;
 use App\Models\Project;
 use App\Models\PropertyUnit;
 use App\Models\Reservation;
@@ -21,6 +23,8 @@ use Inertia\Response;
 
 class SubscriptionController extends Controller
 {
+    public function __construct(private readonly ChargePolicyService $chargePolicyService) {}
+
     private const SCHEDULE_CATEGORIES = [
         'land_installment' => 'land_price',
         'development_levy' => 'development_fee',
@@ -49,17 +53,17 @@ class SubscriptionController extends Controller
                 'unitCode' => trim($subscription->propertyUnit->phase.' '.$subscription->propertyUnit->block.' '.$subscription->propertyUnit->code),
                 'paymentPlanMonths' => $subscription->payment_plan_months,
                 'landPrice' => $subscription->land_price,
-                'statutoryFees' => Money::fromMinorUnits(
-                    Money::toMinorUnits($subscription->development_fee)
-                    + Money::toMinorUnits($subscription->deed_fee)
-                    + Money::toMinorUnits($subscription->survey_fee),
-                ),
+                'additionalChargesTotal' => $this->subscriptionChargeTotal($subscription),
+                'charges' => $subscription->charge_snapshot ?? [],
                 'status' => $subscription->status,
                 'createdAt' => $subscription->created_at?->toIso8601String(),
             ])
             ->values();
 
         $manageableOrganizationIds = Organization::accessibleIdsFor($user, 'subscriptions.manage');
+        $chargesByOrganization = $this->chargePolicyService
+            ->activeForOrganizations($manageableOrganizationIds, 'sales')
+            ->groupBy('organization_id');
 
         return Inertia::render('Subscriptions/Index', [
             'subscriptions' => $subscriptions,
@@ -96,7 +100,12 @@ class SubscriptionController extends Controller
                         'label' => trim($unit->phase.' '.$unit->block.' '.$unit->code),
                         'status' => $unit->status,
                         'effectivePrice' => $this->effectiveLandPrice($unit),
+                        'areaSqm' => $unit->area_sqm,
                     ])->values(),
+                    'chargePolicies' => $chargesByOrganization
+                        ->get($project->organization_id, collect())
+                        ->map(fn (OrganizationChargeType $charge): array => $this->policyForClient($charge))
+                        ->values(),
                 ])
                 ->values(),
             'canManage' => $user->hasPermission('subscriptions.manage'),
@@ -112,9 +121,9 @@ class SubscriptionController extends Controller
             'client_id' => ['required', 'uuid', 'exists:clients,id'],
             'property_unit_id' => ['required', 'uuid', 'exists:property_units,id'],
             'payment_plan_months' => ['required', Rule::in([1, 3, 6, 12, 24])],
-            'development_fee' => ['required', 'numeric', 'min:0', 'decimal:0,2'],
-            'deed_fee' => ['required', 'numeric', 'min:0', 'decimal:0,2'],
-            'survey_fee' => ['required', 'numeric', 'min:0', 'decimal:0,2'],
+            'development_fee' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:9999999999999.99', 'decimal:0,2'],
+            'deed_fee' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:9999999999999.99', 'decimal:0,2'],
+            'survey_fee' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:9999999999999.99', 'decimal:0,2'],
         ]);
 
         $client = Client::query()->findOrFail($validated['client_id']);
@@ -148,6 +157,98 @@ class SubscriptionController extends Controller
 
             $landPriceCents = $this->effectiveLandPriceCents($lockedUnit);
             $months = (int) $validated['payment_plan_months'];
+            $policies = $this->chargePolicyService->activeForOrganizations([$project->organization_id], 'sales', true);
+            $quotes = $this->chargePolicyService->validateQuotes($request->input('charge_quotes'), $policies);
+            $chargeLines = [];
+            $chargeSnapshots = [];
+
+            if ($policies->isEmpty()) {
+                $legacyFees = $request->validate([
+                    'development_fee' => ['required', 'numeric', 'min:0', 'max:9999999999999.99', 'decimal:0,2'],
+                    'deed_fee' => ['required', 'numeric', 'min:0', 'max:9999999999999.99', 'decimal:0,2'],
+                    'survey_fee' => ['required', 'numeric', 'min:0', 'max:9999999999999.99', 'decimal:0,2'],
+                ]);
+                foreach ([
+                    'development_levy' => ['Development levy', 'development_fee'],
+                    'deed_fee' => ['Deed preparation', 'deed_fee'],
+                    'survey_fee' => ['Survey plan', 'survey_fee'],
+                ] as $category => [$name, $field]) {
+                    $amount = Money::toMinorUnits($legacyFees[$field]);
+                    $snapshot = [
+                        'name' => $name,
+                        'category' => $category,
+                        'classification' => 'legacy_company_defined',
+                        'calculation_method' => 'fixed',
+                        'calculated_amount' => Money::fromMinorUnits($amount),
+                        'total_amount' => Money::fromMinorUnits($amount),
+                        'is_recurring' => false,
+                        'schedule_behavior' => 'split_across_plan',
+                        'legacy_input' => true,
+                    ];
+                    $chargeSnapshots[] = $snapshot;
+                    $chargeLines[] = [
+                        'charge_type_id' => null,
+                        'category' => $category,
+                        'name' => $name,
+                        'classification' => 'legacy_company_defined',
+                        'calculation_method' => 'fixed',
+                        'snapshot' => $snapshot,
+                        'installment_amounts' => $this->splitCents($amount, $months),
+                    ];
+                }
+            } else {
+                foreach ($policies as $policy) {
+                    $amount = $this->chargePolicyService->calculate(
+                        $policy,
+                        $landPriceCents,
+                        $lockedUnit->area_sqm,
+                        $quotes,
+                    );
+                    $total = $policy->is_recurring
+                        ? Money::multiplyByInteger($amount, $months)
+                        : $amount;
+                    $snapshot = $this->chargePolicyService->snapshot(
+                        $policy,
+                        $amount,
+                        $total,
+                        $landPriceCents,
+                        $lockedUnit->area_sqm,
+                    );
+                    $snapshot['schedule_behavior'] = $policy->is_recurring
+                        ? 'repeat_each_installment'
+                        : 'split_across_plan';
+                    $chargeSnapshots[] = $snapshot;
+                    $chargeLines[] = [
+                        'charge_type_id' => $policy->id,
+                        'category' => $policy->category,
+                        'name' => $policy->name,
+                        'classification' => $policy->classification,
+                        'calculation_method' => $policy->calculation_method,
+                        'snapshot' => $snapshot,
+                        'installment_amounts' => $policy->is_recurring
+                            ? array_fill(0, $months, $amount)
+                            : $this->splitCents($amount, $months),
+                    ];
+                }
+            }
+
+            $legacyFeeTotals = [
+                'development_fee' => 0,
+                'deed_fee' => 0,
+                'survey_fee' => 0,
+            ];
+            foreach ($chargeSnapshots as $snapshot) {
+                $legacyField = match ($snapshot['category']) {
+                    'development_levy' => 'development_fee',
+                    'deed_fee' => 'deed_fee',
+                    'survey_fee' => 'survey_fee',
+                    default => null,
+                };
+                if ($legacyField !== null) {
+                    $legacyFeeTotals[$legacyField] += Money::toMinorUnits($snapshot['total_amount']);
+                }
+            }
+
             $subscription = Subscription::create([
                 'organization_id' => $project->organization_id,
                 'client_id' => $client->id,
@@ -157,29 +258,39 @@ class SubscriptionController extends Controller
                 'subscription_number' => 'SUB-'.now()->format('Y').'-'.Str::upper(Str::random(8)),
                 'payment_plan_months' => $months,
                 'land_price' => Money::fromMinorUnits($landPriceCents),
-                'development_fee' => $validated['development_fee'],
-                'deed_fee' => $validated['deed_fee'],
-                'survey_fee' => $validated['survey_fee'],
+                'development_fee' => Money::fromMinorUnits($legacyFeeTotals['development_fee']),
+                'deed_fee' => Money::fromMinorUnits($legacyFeeTotals['deed_fee']),
+                'survey_fee' => Money::fromMinorUnits($legacyFeeTotals['survey_fee']),
                 'interest_amount' => 0,
+                'charge_snapshot' => $chargeSnapshots,
                 'status' => 'active',
             ]);
 
-            $totals = [
-                'land_installment' => $landPriceCents,
-                'development_levy' => Money::toMinorUnits($validated['development_fee']),
-                'deed_fee' => Money::toMinorUnits($validated['deed_fee']),
-                'survey_fee' => Money::toMinorUnits($validated['survey_fee']),
-            ];
+            foreach ($this->splitCents($landPriceCents, $months) as $index => $amountCents) {
+                InstallmentSchedule::create([
+                    'subscription_id' => $subscription->id,
+                    'category' => 'land_installment',
+                    'installment_number' => $index + 1,
+                    'due_date' => $months === 1 ? today() : today()->addMonthsNoOverflow($index + 1),
+                    'amount' => Money::fromMinorUnits($amountCents),
+                    'status' => 'unpaid',
+                ]);
+            }
 
-            foreach ($totals as $category => $totalCents) {
-                if ($totalCents === 0) {
-                    continue;
-                }
+            foreach ($chargeLines as $chargeLine) {
+                foreach ($chargeLine['installment_amounts'] as $index => $amountCents) {
+                    if ($amountCents === 0) {
+                        continue;
+                    }
 
-                foreach ($this->splitCents($totalCents, $months) as $index => $amountCents) {
                     InstallmentSchedule::create([
                         'subscription_id' => $subscription->id,
-                        'category' => $category,
+                        'charge_type_id' => $chargeLine['charge_type_id'],
+                        'charge_name_snapshot' => $chargeLine['name'],
+                        'charge_classification_snapshot' => $chargeLine['classification'],
+                        'charge_calculation_method_snapshot' => $chargeLine['calculation_method'],
+                        'charge_policy_snapshot' => $chargeLine['snapshot'],
+                        'category' => $chargeLine['category'],
                         'installment_number' => $index + 1,
                         'due_date' => $months === 1 ? today() : today()->addMonthsNoOverflow($index + 1),
                         'amount' => Money::fromMinorUnits($amountCents),
@@ -201,6 +312,7 @@ class SubscriptionController extends Controller
                     'client_id' => $client->id,
                     'property_unit_id' => $lockedUnit->id,
                     'payment_plan_months' => $months,
+                    'charge_count' => count($chargeSnapshots),
                 ],
                 'ip_address' => $request->ip(),
                 'user_agent' => $request->userAgent(),
@@ -223,6 +335,38 @@ class SubscriptionController extends Controller
             : 0;
 
         return $basePriceCents + $cornerPremiumCents + Money::toMinorUnits($unit->topography_premium_amount);
+    }
+
+    private function subscriptionChargeTotal(Subscription $subscription): string
+    {
+        if ($subscription->charge_snapshot !== null) {
+            $total = array_sum(array_map(
+                fn (array $charge): int => Money::toMinorUnits($charge['total_amount'] ?? '0'),
+                $subscription->charge_snapshot,
+            ));
+
+            return Money::fromMinorUnits($total);
+        }
+
+        return Money::fromMinorUnits(
+            Money::toMinorUnits($subscription->development_fee)
+            + Money::toMinorUnits($subscription->deed_fee)
+            + Money::toMinorUnits($subscription->survey_fee),
+        );
+    }
+
+    /** @return array<string, mixed> */
+    private function policyForClient(OrganizationChargeType $charge): array
+    {
+        return [
+            'id' => $charge->id,
+            'name' => $charge->name,
+            'category' => $charge->category,
+            'classification' => $charge->classification,
+            'calculationMethod' => $charge->calculation_method,
+            'amount' => $charge->amount,
+            'isRecurring' => $charge->is_recurring,
+        ];
     }
 
     /** @return array<int, int> */

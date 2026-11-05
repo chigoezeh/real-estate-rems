@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Database\Factories\SubscriptionFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -22,11 +23,12 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'deed_fee',
     'survey_fee',
     'interest_amount',
+    'charge_snapshot',
     'status',
 ])]
 class Subscription extends Model
 {
-    /** @use HasFactory<\Database\Factories\SubscriptionFactory> */
+    /** @use HasFactory<SubscriptionFactory> */
     use HasFactory, HasUuids;
 
     /** @return BelongsTo<Organization, $this> */
@@ -75,6 +77,7 @@ class Subscription extends Model
             'deed_fee' => 'decimal:2',
             'survey_fee' => 'decimal:2',
             'interest_amount' => 'decimal:2',
+            'charge_snapshot' => 'array',
         ];
     }
 }

@@ -4,12 +4,14 @@ namespace Tests\Feature;
 
 use App\Domain\Services\RentPaymentService;
 use App\Models\Client;
+use App\Models\OrganizationChargeType;
 use App\Models\Project;
 use App\Models\PropertyUnit;
 use App\Models\RentPayment;
 use App\Models\RentSchedule;
 use App\Models\Tenancy;
 use App\Models\User;
+use App\Support\Money;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -131,6 +133,61 @@ class RentManagementTest extends TestCase
             $start->copy()->addMonthsNoOverflow(2)->toDateString(),
             $tenancy->rentSchedules()->where('category', 'rent')->orderBy('period_starts_on')->skip(2)->firstOrFail()->period_starts_on->toDateString(),
         );
+    }
+
+    public function test_rental_charge_policies_are_snapshotted_and_generate_recurring_or_one_time_schedules(): void
+    {
+        $owner = $this->installOwner();
+        $organization = $owner->organizations()->firstOrFail();
+        $client = $this->createVerifiedClient($owner, $organization->id);
+        $property = $this->createRentableProperty($organization->id);
+        $property->update(['area_sqm' => '80.41']);
+        $start = today()->startOfMonth();
+        $end = $start->copy()->addMonthsNoOverflow(3)->subDay();
+
+        $serviceCharge = $this->createRentalCharge($organization->id, 'Estate service charge', 'service_charge', 'fixed', '75.00', true);
+        $areaCharge = $this->createRentalCharge($organization->id, 'Common area levy', 'infrastructure', 'per_area', '2.50', true);
+        $depositCharge = $this->createRentalCharge($organization->id, 'Security deposit', 'security_deposit', 'manual_quote', '0.00');
+
+        $this->actingAs($owner)->post(route('tenancies.store', absolute: false), [
+            'client_id' => $client->id,
+            'property_unit_id' => $property->id,
+            'starts_on' => $start->toDateString(),
+            'ends_on' => $end->toDateString(),
+            'rent_frequency' => 'monthly',
+            'rent_amount' => '1000.00',
+            'charge_quotes' => [$depositCharge->id => '125.00'],
+        ])->assertRedirect(route('tenancies.index', absolute: false));
+
+        $tenancy = Tenancy::query()->firstOrFail();
+        $this->assertSame('125.00', $tenancy->security_deposit);
+        $this->assertSame('75.00', $tenancy->service_charge);
+        $chargeTotal = array_sum(array_map(
+            fn (array $charge): int => Money::toMinorUnits($charge['total_amount']),
+            $tenancy->terms_snapshot['charges'],
+        ));
+        $this->assertSame('953.09', Money::fromMinorUnits($chargeTotal));
+
+        $serviceCharge->update(['amount' => '999.00', 'is_active' => false]);
+        $this->actingAs($owner)->patch(route('tenancies.activate', $tenancy, absolute: false))
+            ->assertRedirect(route('tenancies.index', absolute: false));
+
+        $this->assertSame(3, $tenancy->rentSchedules()->where('category', 'rent')->count());
+        $serviceSchedules = $tenancy->rentSchedules()->where('charge_type_id', $serviceCharge->id)->get();
+        $areaSchedules = $tenancy->rentSchedules()->where('charge_type_id', $areaCharge->id)->get();
+        $depositSchedules = $tenancy->rentSchedules()->where('charge_type_id', $depositCharge->id)->get();
+        $this->assertCount(3, $serviceSchedules);
+        $this->assertCount(3, $areaSchedules);
+        $this->assertCount(1, $depositSchedules);
+        $this->assertSame('225.00', Money::fromMinorUnits(
+            $serviceSchedules->sum(fn (RentSchedule $schedule): int => Money::toMinorUnits($schedule->amount_due)),
+        ));
+        $this->assertSame('603.09', Money::fromMinorUnits(
+            $areaSchedules->sum(fn (RentSchedule $schedule): int => Money::toMinorUnits($schedule->amount_due)),
+        ));
+        $this->assertSame('125.00', $depositSchedules->firstOrFail()->amount_due);
+        $this->assertSame('Estate service charge', $serviceSchedules->firstOrFail()->charge_name_snapshot);
+        $this->assertSame('75.00', $serviceSchedules->firstOrFail()->charge_policy_snapshot['calculated_amount']);
     }
 
     public function test_rent_payment_submission_reserves_balance_and_proof_is_private(): void
@@ -260,6 +317,27 @@ class RentManagementTest extends TestCase
             'rent_amount' => 1000,
             'security_deposit' => 100,
             'service_charge' => 50,
+        ]);
+    }
+
+    private function createRentalCharge(
+        string $organizationId,
+        string $name,
+        string $category,
+        string $method,
+        string $amount,
+        bool $recurring = false,
+    ): OrganizationChargeType {
+        return OrganizationChargeType::create([
+            'organization_id' => $organizationId,
+            'name' => $name,
+            'category' => $category,
+            'classification' => 'company_defined',
+            'calculation_method' => $method,
+            'amount' => $amount,
+            'is_recurring' => $recurring,
+            'is_active' => true,
+            'rules' => ['applies_to' => ['rentals']],
         ]);
     }
 }

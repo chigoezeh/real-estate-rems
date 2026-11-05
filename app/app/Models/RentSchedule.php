@@ -10,6 +10,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 #[Fillable([
     'tenancy_id',
+    'charge_type_id',
+    'charge_name_snapshot',
+    'charge_classification_snapshot',
+    'charge_calculation_method_snapshot',
+    'charge_policy_snapshot',
     'category',
     'period_starts_on',
     'period_ends_on',
@@ -25,6 +30,12 @@ class RentSchedule extends Model
     public function tenancy(): BelongsTo
     {
         return $this->belongsTo(Tenancy::class);
+    }
+
+    /** @return BelongsTo<OrganizationChargeType, $this> */
+    public function chargeType(): BelongsTo
+    {
+        return $this->belongsTo(OrganizationChargeType::class, 'charge_type_id');
     }
 
     /** @return BelongsToMany<RentPayment, $this> */
@@ -43,6 +54,7 @@ class RentSchedule extends Model
             'period_ends_on' => 'date',
             'due_on' => 'date',
             'amount_due' => 'decimal:2',
+            'charge_policy_snapshot' => 'array',
         ];
     }
 }

@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Domain\Services\ChargePolicyService;
 use App\Models\AuditLog;
 use App\Models\Client;
 use App\Models\Organization;
+use App\Models\OrganizationChargeType;
 use App\Models\PropertyUnit;
 use App\Models\RentSchedule;
 use App\Models\Tenancy;
@@ -21,6 +23,8 @@ use Inertia\Response;
 
 class TenancyController extends Controller
 {
+    public function __construct(private readonly ChargePolicyService $chargePolicyService) {}
+
     private const FREQUENCIES = [
         'monthly' => 1,
         'quarterly' => 3,
@@ -35,6 +39,9 @@ class TenancyController extends Controller
 
         $organizationIds = Organization::accessibleIdsFor($user, 'tenancies.view');
         $manageableOrganizationIds = Organization::accessibleIdsFor($user, 'tenancies.manage');
+        $chargesByOrganization = $this->chargePolicyService
+            ->activeForOrganizations($manageableOrganizationIds, 'rentals')
+            ->groupBy('organization_id');
 
         return Inertia::render('Tenancies/Index', [
             'tenancies' => Tenancy::query()
@@ -54,6 +61,8 @@ class TenancyController extends Controller
                     'endsOn' => $tenancy->ends_on?->toDateString(),
                     'frequency' => $tenancy->rent_frequency,
                     'rentAmount' => $tenancy->rent_amount,
+                    'additionalChargesTotal' => $this->tenancyChargeTotal($tenancy),
+                    'additionalCharges' => $tenancy->terms_snapshot['charges'] ?? [],
                     'currency' => $tenancy->organization->currency,
                     'canManage' => in_array($tenancy->organization_id, $manageableOrganizationIds, true),
                 ])
@@ -71,7 +80,7 @@ class TenancyController extends Controller
                 ])
                 ->values(),
             'properties' => PropertyUnit::query()
-                ->with('project:id,organization_id,name')
+                ->with(['project:id,organization_id,name', 'project.organization:id,currency'])
                 ->whereHas('project', fn ($query) => $query->whereIn('organization_id', $manageableOrganizationIds)->where('status', 'active'))
                 ->where('status', 'available')
                 ->where('rental_status', 'available')
@@ -81,8 +90,14 @@ class TenancyController extends Controller
                     'id' => $property->id,
                     'organizationId' => $property->project->organization_id,
                     'projectName' => $property->project->name,
+                    'currency' => $property->project->organization->currency,
                     'label' => trim($property->phase.' '.$property->block.' '.$property->code),
                     'unitType' => $property->unit_type,
+                    'areaSqm' => $property->area_sqm,
+                    'chargePolicies' => $chargesByOrganization
+                        ->get($property->project->organization_id, collect())
+                        ->map(fn (OrganizationChargeType $charge): array => $this->policyForClient($charge))
+                        ->values(),
                 ])
                 ->values(),
             'canManage' => $user->hasPermission('tenancies.manage'),
@@ -101,8 +116,8 @@ class TenancyController extends Controller
             'ends_on' => ['required', 'date', 'after:starts_on'],
             'rent_frequency' => ['required', Rule::in(array_keys(self::FREQUENCIES))],
             'rent_amount' => ['required', 'numeric', 'gt:0', 'decimal:0,2'],
-            'security_deposit' => ['required', 'numeric', 'min:0', 'decimal:0,2'],
-            'service_charge' => ['required', 'numeric', 'min:0', 'decimal:0,2'],
+            'security_deposit' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:9999999999999.99', 'decimal:0,2'],
+            'service_charge' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:9999999999999.99', 'decimal:0,2'],
         ]);
 
         $property = PropertyUnit::query()->with('project')->findOrFail($validated['property_unit_id']);
@@ -121,6 +136,54 @@ class TenancyController extends Controller
             $lockedProperty = PropertyUnit::query()->lockForUpdate()->findOrFail($property->id);
             abort_unless($lockedProperty->status === 'available' && $lockedProperty->rental_status === 'available', 409, 'This property is not listed as available for rent.');
 
+            $policies = $this->chargePolicyService->activeForOrganizations([$organizationId], 'rentals', true);
+            $quotes = $this->chargePolicyService->validateQuotes($request->input('charge_quotes'), $policies);
+            $chargeSnapshots = [];
+            $securityDepositCents = 0;
+            $serviceChargeCents = 0;
+            if ($policies->isEmpty()) {
+                $legacyCharges = $request->validate([
+                    'security_deposit' => ['required', 'numeric', 'min:0', 'max:9999999999999.99', 'decimal:0,2'],
+                    'service_charge' => ['required', 'numeric', 'min:0', 'max:9999999999999.99', 'decimal:0,2'],
+                ]);
+                $securityDepositCents = Money::toMinorUnits($legacyCharges['security_deposit']);
+                $serviceChargeCents = Money::toMinorUnits($legacyCharges['service_charge']);
+            } else {
+                $periodCount = $this->rentPeriodCount(
+                    $validated['starts_on'],
+                    $validated['ends_on'],
+                    self::FREQUENCIES[$validated['rent_frequency']],
+                );
+                $rentAmountCents = Money::toMinorUnits($validated['rent_amount']);
+                foreach ($policies as $policy) {
+                    $amount = $this->chargePolicyService->calculate(
+                        $policy,
+                        $rentAmountCents,
+                        $lockedProperty->area_sqm,
+                        $quotes,
+                    );
+                    $total = $policy->is_recurring
+                        ? Money::multiplyByInteger($amount, $periodCount)
+                        : $amount;
+                    $snapshot = $this->chargePolicyService->snapshot(
+                        $policy,
+                        $amount,
+                        $total,
+                        $rentAmountCents,
+                        $lockedProperty->area_sqm,
+                    );
+                    $snapshot['schedule_behavior'] = $policy->is_recurring ? 'repeat_each_period' : 'first_period_only';
+                    $chargeSnapshots[] = $snapshot;
+
+                    if ($policy->category === 'security_deposit') {
+                        $securityDepositCents += $total;
+                    }
+                    if ($policy->category === 'service_charge' && $policy->is_recurring) {
+                        $serviceChargeCents += $amount;
+                    }
+                }
+            }
+
             $tenancy = Tenancy::create([
                 'organization_id' => $organizationId,
                 'property_unit_id' => $lockedProperty->id,
@@ -132,13 +195,14 @@ class TenancyController extends Controller
                 'ends_on' => $validated['ends_on'],
                 'rent_frequency' => $validated['rent_frequency'],
                 'rent_amount' => $validated['rent_amount'],
-                'security_deposit' => $validated['security_deposit'],
-                'service_charge' => $validated['service_charge'],
+                'security_deposit' => Money::fromMinorUnits($securityDepositCents),
+                'service_charge' => Money::fromMinorUnits($serviceChargeCents),
                 'terms_snapshot' => [
                     'rent_frequency' => $validated['rent_frequency'],
                     'rent_amount' => $validated['rent_amount'],
-                    'security_deposit' => $validated['security_deposit'],
-                    'service_charge' => $validated['service_charge'],
+                    'security_deposit' => Money::fromMinorUnits($securityDepositCents),
+                    'service_charge' => Money::fromMinorUnits($serviceChargeCents),
+                    'charges' => $chargeSnapshots,
                 ],
             ]);
 
@@ -222,7 +286,8 @@ class TenancyController extends Controller
                 'status' => 'unpaid',
             ]);
 
-            if (Money::toMinorUnits($tenancy->service_charge) > 0) {
+            $chargeSnapshots = $tenancy->terms_snapshot['charges'] ?? [];
+            if ($chargeSnapshots === [] && Money::toMinorUnits($tenancy->service_charge) > 0) {
                 RentSchedule::create([
                     'tenancy_id' => $tenancy->id,
                     ...$period,
@@ -232,7 +297,7 @@ class TenancyController extends Controller
                 ]);
             }
 
-            if ($periodCount === 1 && Money::toMinorUnits($tenancy->security_deposit) > 0) {
+            if ($chargeSnapshots === [] && $periodCount === 1 && Money::toMinorUnits($tenancy->security_deposit) > 0) {
                 RentSchedule::create([
                     'tenancy_id' => $tenancy->id,
                     ...$period,
@@ -242,8 +307,84 @@ class TenancyController extends Controller
                 ]);
             }
 
+            if ($periodCount === 1) {
+                foreach ($chargeSnapshots as $charge) {
+                    if (($charge['schedule_behavior'] ?? 'first_period_only') !== 'repeat_each_period'
+                        && Money::toMinorUnits($charge['calculated_amount']) > 0) {
+                        $this->createPolicyRentSchedule($tenancy, $charge, $period, $charge['calculated_amount']);
+                    }
+                }
+            }
+
+            foreach ($chargeSnapshots as $charge) {
+                if (($charge['schedule_behavior'] ?? '') === 'repeat_each_period'
+                    && Money::toMinorUnits($charge['calculated_amount']) > 0) {
+                    $this->createPolicyRentSchedule($tenancy, $charge, $period, $charge['calculated_amount']);
+                }
+            }
+
             $periodStart = $termStart->copy()->addMonthsNoOverflow($months * $periodCount);
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $charge
+     * @param  array<string, string>  $period
+     */
+    private function createPolicyRentSchedule(Tenancy $tenancy, array $charge, array $period, string $amount): void
+    {
+        RentSchedule::create([
+            'tenancy_id' => $tenancy->id,
+            'charge_type_id' => $charge['charge_type_id'],
+            'charge_name_snapshot' => $charge['name'],
+            'charge_classification_snapshot' => $charge['classification'],
+            'charge_calculation_method_snapshot' => $charge['calculation_method'],
+            'charge_policy_snapshot' => $charge,
+            'category' => $charge['category'],
+            ...$period,
+            'amount_due' => $amount,
+            'status' => 'unpaid',
+        ]);
+    }
+
+    private function rentPeriodCount(string $startsOn, string $endsOn, int $months): int
+    {
+        $termStart = Carbon::parse($startsOn);
+        $termEnd = Carbon::parse($endsOn);
+        $periodStart = $termStart->copy();
+        $periodCount = 0;
+
+        while ($periodStart->lte($termEnd)) {
+            $periodCount++;
+            abort_unless($periodCount <= 60, 422, 'The tenancy creates too many rent periods.');
+            $periodStart = $termStart->copy()->addMonthsNoOverflow($months * $periodCount);
+        }
+
+        return $periodCount;
+    }
+
+    /** @return array<string, mixed> */
+    private function policyForClient(OrganizationChargeType $charge): array
+    {
+        return [
+            'id' => $charge->id,
+            'name' => $charge->name,
+            'category' => $charge->category,
+            'classification' => $charge->classification,
+            'calculationMethod' => $charge->calculation_method,
+            'amount' => $charge->amount,
+            'isRecurring' => $charge->is_recurring,
+        ];
+    }
+
+    private function tenancyChargeTotal(Tenancy $tenancy): string
+    {
+        $total = array_sum(array_map(
+            fn (array $charge): int => Money::toMinorUnits($charge['total_amount'] ?? '0'),
+            $tenancy->terms_snapshot['charges'] ?? [],
+        ));
+
+        return Money::fromMinorUnits($total);
     }
 
     /** @param array<string, mixed> $metadata */
