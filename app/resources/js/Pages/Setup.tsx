@@ -12,9 +12,10 @@ type SetupForm = {
     administrator_email: string;
     password: string;
     password_confirmation: string;
+    populate_demo_data: boolean;
 };
 
-export default function Setup() {
+export default function Setup({ canSeedDemoData }: { canSeedDemoData: boolean }) {
     const { data, setData, post, processing, errors } = useForm<SetupForm>({
         organization_name: '',
         country: 'NG',
@@ -24,6 +25,7 @@ export default function Setup() {
         administrator_email: '',
         password: '',
         password_confirmation: '',
+        populate_demo_data: false,
     });
 
     const submit: FormEventHandler = (event) => {
@@ -128,6 +130,27 @@ export default function Setup() {
                                     </div>
                                 </div>
                             </section>
+
+                            {canSeedDemoData && (
+                                <section className="space-y-3 rounded-xl border border-[#dce3db] bg-white/70 p-4">
+                                    <label htmlFor="populate_demo_data" className="flex cursor-pointer items-start gap-3">
+                                        <input
+                                            id="populate_demo_data"
+                                            type="checkbox"
+                                            checked={data.populate_demo_data}
+                                            onChange={(event) => setData('populate_demo_data', event.target.checked)}
+                                            className="mt-1 size-4 rounded border-[#aab8ad] text-[#17352d] focus:ring-[#8ba344]"
+                                        />
+                                        <span>
+                                            <span className="block text-sm font-semibold text-[#29483e]">Populate with development demo data</span>
+                                            <span className="mt-1 block text-xs leading-5 text-[#61736d]">
+                                                Add synthetic clients, projects, property units, sales, rent, inspections, maintenance records, and a branch for local testing.
+                                            </span>
+                                        </span>
+                                    </label>
+                                    <InputError message={errors.populate_demo_data} />
+                                </section>
+                            )}
 
                             <button type="submit" disabled={processing} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-[#17352d] px-5 text-sm font-semibold text-white transition hover:bg-[#244b40] focus:outline-none focus:ring-2 focus:ring-[#8ba344] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60">
                                 {processing ? 'Creating workspace…' : 'Create workspace'}

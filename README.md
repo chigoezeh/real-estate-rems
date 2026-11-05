@@ -4,7 +4,7 @@ A self-hosted, configurable real-estate operations platform for property compani
 
 ## Current implementation
 
-The Laravel application is in [`app/`](app/). The first implementation milestone includes:
+The Laravel application is in [`app/`](app/). The implementation includes:
 
 - One-time company and administrator setup
 - UUID-backed users, organizations, roles, permissions, and audit records
@@ -15,7 +15,7 @@ The Laravel application is in [`app/`](app/). The first implementation milestone
 - Login, a company-aware dashboard, and a responsive React/Inertia admin shell
 - MySQL as the default database connection
 
-Property inventory now supports project and unit setup, configurable title types, premium fields, and temporary reservations with locked status transitions. CRM, payments, allocation, legal documents, and realtor workflows remain planned. The HTML files in the repository root are early sketches, not application entrypoints.
+The property and operations workflows include normalized geography, project/unit inventory, title records, client KYC, inspection bookings, subscriptions and installment payments, approved property allocation, company-configured charge policies, rental tenancies and rent payments, and maintenance requests/work orders. Allocation requires reconciled full payment, verified property-level title, and authorized inventory approval. Extended tenancy lifecycle, commissions, notifications, and reporting remain planned. The HTML files in the repository root are early sketches, not application entrypoints.
 
 ## Requirements
 
@@ -52,5 +52,9 @@ Property inventory now supports project and unit setup, configurable title types
 	```
 
 5. Open the local application. The first visit leads to the one-time setup form. Create the primary company and owner account; public registration is disabled.
+
+When `APP_ENV=local`, setup also offers an optional **Populate with development demo data** checkbox. Selecting it creates synthetic records across clients/KYC, organization branches, projects and inventory, charge policies, sales and installment payments, tenancies and rent payments, inspections, land-title records, and maintenance. The generated payment proof is a local placeholder image; no real client or payment information is included. This option is hidden and rejected outside the local environment.
+
+For an already-installed local workspace, run `php artisan db:seed --class=DevelopmentDemoSeeder` from `app/`. The command is local-environment-only and does nothing if demo data has already been seeded for the primary company.
 
 For production, configure HTTPS, mail, backups, private document storage, and a non-root MySQL account before onboarding real client data.

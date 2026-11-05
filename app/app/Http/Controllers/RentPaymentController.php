@@ -36,13 +36,17 @@ class RentPaymentController extends Controller
             ->orderBy('due_on')
             ->limit(500)
             ->get()
-            ->map(function (RentSchedule $schedule): array {
+            ->map(function (RentSchedule $schedule) use ($submittableOrganizationIds): array {
                 $paidCents = $schedule->payments
                     ->where('status', 'approved')
                     ->sum(fn (RentPayment $payment): int => Money::toMinorUnits($payment->pivot->amount));
                 $pendingCents = $schedule->payments
                     ->where('status', 'pending')
                     ->sum(fn (RentPayment $payment): int => Money::toMinorUnits($payment->pivot->amount));
+                $amountDueCents = Money::toMinorUnits($schedule->amount_due);
+                $arrearsCents = $schedule->due_on->lt(today())
+                    ? max(0, $amountDueCents - $paidCents)
+                    : 0;
 
                 return [
                     'id' => $schedule->id,
@@ -55,12 +59,14 @@ class RentPaymentController extends Controller
                     'amountDue' => $schedule->amount_due,
                     'amountPaid' => Money::fromMinorUnits($paidCents),
                     'pendingAmount' => Money::fromMinorUnits($pendingCents),
-                    'availableAmount' => Money::fromMinorUnits(max(0, Money::toMinorUnits($schedule->amount_due) - $paidCents - $pendingCents)),
+                    'arrearsAmount' => Money::fromMinorUnits($arrearsCents),
+                    'availableAmount' => Money::fromMinorUnits(max(0, $amountDueCents - $paidCents - $pendingCents)),
                     'currency' => $schedule->tenancy->organization->currency,
                     'canSubmit' => in_array($schedule->tenancy->organization_id, $submittableOrganizationIds, true),
                 ];
             })
-            ->filter(fn (array $schedule): bool => Money::toMinorUnits($schedule['availableAmount']) > 0)
+            ->filter(fn (array $schedule): bool => Money::toMinorUnits($schedule['availableAmount']) > 0
+                || Money::toMinorUnits($schedule['arrearsAmount']) > 0)
             ->values();
 
         return Inertia::render('RentPayments/Index', [

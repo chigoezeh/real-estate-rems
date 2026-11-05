@@ -1,8 +1,9 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import InputError from '@/Components/InputError';
-import { Head, useForm } from '@inertiajs/react';
+import { Head, router, useForm, usePage } from '@inertiajs/react';
 import { BadgeDollarSign, CalendarDays, FileSpreadsheet, Plus, ReceiptText, Users, X } from 'lucide-react';
 import { FormEventHandler, useMemo, useState } from 'react';
+import { PageProps } from '@/types';
 
 type Client = { id: string; organizationId: string; fullName: string; phone: string };
 type Unit = { id: string; label: string; status: string; effectivePrice: string; areaSqm: string | null };
@@ -28,6 +29,17 @@ type Subscription = {
     charges: Array<{ name: string; total_amount: string }>;
     status: string;
     createdAt: string | null;
+    allocation: {
+        id: string;
+        reference: string;
+        status: string;
+        titleReference: string | null;
+        allocatedAt: string | null;
+        rejectionReason: string | null;
+    } | null;
+    canRequestAllocation: boolean;
+    allocationBlocker: string | null;
+    canReviewAllocation: boolean;
 };
 type SubscriptionForm = {
     client_id: string;
@@ -58,8 +70,19 @@ const formatMoney = (amount: string | number, currency: string): string => new I
 
 export default function Index({ subscriptions, clients, projects, canManage }: Props) {
     const [isOpen, setIsOpen] = useState(false);
+    const [allocationToReject, setAllocationToReject] = useState<Subscription | null>(null);
     const [selectedProjectId, setSelectedProjectId] = useState(projects[0]?.id ?? '');
+    const page = usePage<PageProps<{ errors: { allocation?: string } }>>();
     const { data, setData, post, processing, errors, reset, clearErrors } = useForm<SubscriptionForm>(emptyForm());
+    const {
+        data: rejectionData,
+        setData: setRejectionData,
+        patch: submitRejection,
+        processing: rejecting,
+        errors: rejectionErrors,
+        reset: resetRejection,
+        clearErrors: clearRejectionErrors,
+    } = useForm<{ rejection_reason: string }>({ rejection_reason: '' });
     const selectedProject = projects.find((project) => project.id === selectedProjectId);
     const availableUnits = selectedProject?.units.filter((unit) => unit.status === 'available') ?? [];
     const organizationClients = useMemo(() => clients.filter((client) => client.organizationId === selectedProject?.organizationId), [clients, selectedProject]);
@@ -100,6 +123,36 @@ export default function Index({ subscriptions, clients, projects, canManage }: P
         post(route('subscriptions.store'), { onSuccess: closeForm });
     };
 
+    const requestAllocation = (subscription: Subscription) => {
+        router.post(route('subscriptions.allocations.store', subscription.id), {}, { preserveScroll: true });
+    };
+
+    const approveAllocation = (subscription: Subscription) => {
+        if (!subscription.allocation) return;
+        router.patch(route('property-allocations.approve', subscription.allocation.id), {}, { preserveScroll: true });
+    };
+
+    const openRejectDialog = (subscription: Subscription) => {
+        clearRejectionErrors();
+        setRejectionData('rejection_reason', '');
+        setAllocationToReject(subscription);
+    };
+
+    const closeRejectDialog = () => {
+        setAllocationToReject(null);
+        resetRejection();
+        clearRejectionErrors();
+    };
+
+    const rejectAllocation: FormEventHandler = (event) => {
+        event.preventDefault();
+        if (!allocationToReject?.allocation) return;
+        submitRejection(route('property-allocations.reject', allocationToReject.allocation.id), {
+            preserveScroll: true,
+            onSuccess: closeRejectDialog,
+        });
+    };
+
     const selectedUnit = selectedProject?.units.find((unit) => unit.id === data.property_unit_id);
     const activeChargePolicies = selectedProject?.chargePolicies ?? [];
 
@@ -118,11 +171,13 @@ export default function Index({ subscriptions, clients, projects, canManage }: P
                     <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-lg bg-[#e5eef0] text-[#41636b]"><BadgeDollarSign size={18} /></span><div><p className="text-xs text-[#73827d]">Contracted land value</p><p className="mt-1 text-lg font-semibold text-[#233c33]">{formatMoney(totalLandValue, projects[0]?.currency ?? 'NGN')}</p></div></div>
                 </div>
 
+                {page.props.errors.allocation && <p role="alert" className="rounded-lg border border-[#e7c7bd] bg-[#fff7f4] px-4 py-3 text-sm text-[#8d3e2d]">{page.props.errors.allocation}</p>}
+
                 {canManage && (projects.length === 0 || clients.length === 0) && <div className="border-l-2 border-[#8ba344] bg-white px-5 py-4 text-sm text-[#53675e]">{clients.length === 0 ? 'Clients need verified KYC before they can subscribe.' : 'Add an active project with available units before creating a subscription.'}</div>}
 
                 <div className="overflow-x-auto rounded-lg border border-[#dfe5df] bg-white">
                     <table className="w-full min-w-[850px] text-left">
-                        <thead className="bg-[#f8faf6] text-[11px] font-semibold uppercase tracking-[0.12em] text-[#77857f]"><tr><th className="px-5 py-3 sm:px-7">Subscription</th><th className="px-5 py-3">Client</th><th className="px-5 py-3">Property</th><th className="px-5 py-3">Plan</th><th className="px-5 py-3 text-right">Land price</th><th className="px-5 py-3 text-right sm:px-7">Status</th></tr></thead>
+                        <thead className="bg-[#f8faf6] text-[11px] font-semibold uppercase tracking-[0.12em] text-[#77857f]"><tr><th className="px-5 py-3 sm:px-7">Subscription</th><th className="px-5 py-3">Client</th><th className="px-5 py-3">Property</th><th className="px-5 py-3">Plan</th><th className="px-5 py-3 text-right">Land price</th><th className="px-5 py-3 text-right sm:px-7">Status & allocation</th></tr></thead>
                         <tbody className="divide-y divide-[#edf0ec]">
                             {subscriptions.map((subscription) => <tr key={subscription.id} className="hover:bg-[#fbfcfa]">
                                 <td className="px-5 py-4 sm:px-7"><p className="text-sm font-semibold text-[#233c33]">{subscription.number}</p><p className="mt-1 text-xs text-[#7b8983]">{subscription.createdAt ? new Date(subscription.createdAt).toLocaleDateString() : ''}</p></td>
@@ -130,13 +185,49 @@ export default function Index({ subscriptions, clients, projects, canManage }: P
                                 <td className="px-5 py-4"><p className="text-sm text-[#4c6259]">{subscription.projectName}</p><p className="mt-1 text-xs text-[#7b8983]">{subscription.unitCode}</p></td>
                                 <td className="px-5 py-4 text-sm text-[#4c6259]">{subscription.paymentPlanMonths === 1 ? 'Outright' : `${subscription.paymentPlanMonths} months`}</td>
                                 <td className="px-5 py-4 text-right text-sm font-medium text-[#29483e]">{formatMoney(subscription.landPrice, projects[0]?.currency ?? 'NGN')}<p className="mt-1 text-xs font-normal text-[#7b8983]">Additional charges {formatMoney(subscription.additionalChargesTotal, projects[0]?.currency ?? 'NGN')}</p>{subscription.charges.length > 0 && <p className="mt-1 max-w-56 truncate text-xs font-normal text-[#7b8983]" title={subscription.charges.map((charge) => charge.name).join(', ')}>{subscription.charges.map((charge) => charge.name).join(', ')}</p>}</td>
-                                <td className="px-5 py-4 text-right sm:px-7"><span className="rounded-full bg-[#edf4eb] px-2.5 py-1 text-xs font-medium capitalize text-[#315447]">{subscription.status}</span></td>
+                                <td className="px-5 py-4 text-right sm:px-7">
+                                    <span className="rounded-full bg-[#edf4eb] px-2.5 py-1 text-xs font-medium capitalize text-[#315447]">{subscription.status}</span>
+                                    {subscription.allocation && <div className="mt-2 text-xs text-[#64756e]">
+                                        <p>Allocation {subscription.allocation.status.replaceAll('_', ' ')} · {subscription.allocation.reference}</p>
+                                        {subscription.allocation.titleReference && <p className="mt-1">Title {subscription.allocation.titleReference}</p>}
+                                        {subscription.allocation.allocatedAt && <p className="mt-1">Allocated {subscription.allocation.allocatedAt}</p>}
+                                        {subscription.allocation.rejectionReason && <p className="mt-1 text-[#8d3e2d]">{subscription.allocation.rejectionReason}</p>}
+                                    </div>}
+                                    {subscription.canRequestAllocation && <button type="button" onClick={() => requestAllocation(subscription)} className="mt-2 rounded-md border border-[#315447] px-2.5 py-1.5 text-xs font-semibold text-[#315447] hover:bg-[#edf4eb]">Request allocation</button>}
+                                    {subscription.allocationBlocker && subscription.status === 'active' && <p className="mt-2 max-w-56 text-xs text-[#7b8983]">{subscription.allocationBlocker}</p>}
+                                    {subscription.canReviewAllocation && subscription.allocation && <div className="mt-2 flex justify-end gap-2">
+                                        <button type="button" onClick={() => approveAllocation(subscription)} className="rounded-md bg-[#315447] px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-[#244b40]">Approve</button>
+                                        <button type="button" onClick={() => openRejectDialog(subscription)} className="rounded-md border border-[#c98d7e] px-2.5 py-1.5 text-xs font-semibold text-[#8d3e2d] hover:bg-[#fff7f4]">Reject</button>
+                                    </div>}
+                                </td>
                             </tr>)}
                         </tbody>
                     </table>
                     {subscriptions.length === 0 && <div className="border-t border-[#edf0ec] px-5 py-12 text-center"><FileSpreadsheet size={22} className="mx-auto text-[#8a9791]" /><p className="mt-3 text-sm font-medium text-[#29483e]">No subscriptions have been created yet.</p></div>}
                 </div>
             </div>
+
+            {allocationToReject?.allocation && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#10251f]/45 px-4 py-6">
+                    <section role="dialog" aria-modal="true" aria-labelledby="allocation-rejection-title" className="w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl sm:p-8">
+                        <div className="flex items-start justify-between gap-5">
+                            <div><p className="eyebrow">Property allocation</p><h2 id="allocation-rejection-title" className="mt-2 font-display text-2xl text-[#18342c]">Reject request</h2></div>
+                            <button type="button" onClick={closeRejectDialog} aria-label="Close dialog" className="grid size-9 place-items-center rounded-lg text-[#6d7d76] hover:bg-[#f1f4ef] hover:text-[#17352d]"><X size={18} /></button>
+                        </div>
+                        <form onSubmit={rejectAllocation} className="mt-6 space-y-4">
+                            <div>
+                                <label htmlFor="allocation_rejection_reason" className="field-label">Reason</label>
+                                <textarea id="allocation_rejection_reason" value={rejectionData.rejection_reason} onChange={(event) => setRejectionData('rejection_reason', event.target.value)} className="field-input min-h-28" maxLength={2000} required />
+                                <InputError message={rejectionErrors.rejection_reason} className="mt-2" />
+                            </div>
+                            <div className="flex justify-end gap-3">
+                                <button type="button" onClick={closeRejectDialog} className="rounded-lg border border-[#d7dfd8] px-4 py-2 text-sm font-semibold text-[#53675e]">Cancel</button>
+                                <button type="submit" disabled={rejecting} className="rounded-lg bg-[#8d3e2d] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{rejecting ? 'Rejecting…' : 'Reject allocation'}</button>
+                            </div>
+                        </form>
+                    </section>
+                </div>
+            )}
 
             {isOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#10251f]/45 px-4 py-6" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closeForm()}>

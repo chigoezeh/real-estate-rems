@@ -4,9 +4,12 @@ namespace Tests\Feature;
 
 use App\Models\InstallationState;
 use App\Models\Organization;
-use App\Models\Role;
 use App\Models\User;
+use Database\Seeders\DevelopmentDemoSeeder;
+use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
+use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
 class InstallationTest extends TestCase
@@ -35,6 +38,8 @@ class InstallationTest extends TestCase
         $this->assertSame('NGN', $organization->currency);
         $this->assertSame('company', $organization->kind);
         $this->assertTrue(InstallationState::isInstalled());
+        $this->assertDatabaseCount('organizations', 1);
+        $this->assertDatabaseCount('clients', 0);
         $this->assertDatabaseHas('roles', [
             'organization_id' => $organization->id,
             'key' => 'owner',
@@ -78,6 +83,75 @@ class InstallationTest extends TestCase
         ])->assertSessionHasErrors(['organization_name', 'password']);
 
         $this->assertFalse(InstallationState::isInstalled());
+        $this->assertDatabaseCount('users', 0);
+    }
+
+    public function test_development_setup_can_seed_synthetic_demo_workflows(): void
+    {
+        $this->app['env'] = 'local';
+        $this->withoutMiddleware(PreventRequestForgery::class);
+        Storage::fake('local');
+
+        $this->get('/setup')->assertInertia(fn (Assert $page) => $page
+            ->component('Setup')
+            ->where('canSeedDemoData', true));
+
+        $this->post('/setup', [
+            'organization_name' => 'Northstar Properties',
+            'country' => 'NG',
+            'currency' => 'NGN',
+            'timezone' => 'Africa/Lagos',
+            'administrator_name' => 'Ada Okafor',
+            'administrator_email' => 'ada@example.test',
+            'password' => 'a-strong-password',
+            'password_confirmation' => 'a-strong-password',
+            'populate_demo_data' => true,
+        ])->assertRedirect(route('dashboard', absolute: false));
+
+        $this->assertDatabaseCount('organizations', 2);
+        $this->assertDatabaseCount('clients', 14);
+        $this->assertDatabaseCount('projects', 4);
+        $this->assertDatabaseCount('property_units', 48);
+        $this->assertDatabaseCount('subscriptions', 4);
+        $this->assertDatabaseCount('tenancies', 5);
+        $this->assertDatabaseCount('inspections', 8);
+        $this->assertDatabaseCount('maintenance_requests', 6);
+        $this->assertDatabaseCount('maintenance_work_orders', 3);
+        $this->assertDatabaseCount('land_title_records', 16);
+        $this->assertDatabaseCount('reservations', 1);
+        $this->assertDatabaseCount('payments', 9);
+        $this->assertDatabaseCount('rent_payments', 3);
+        $this->assertDatabaseCount('organization_charge_types', 10);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'development_demo_data.seeded']);
+        Storage::disk('local')->assertExists('demo-seed/payment-proof.png');
+
+        app(DevelopmentDemoSeeder::class)->run();
+        $this->assertDatabaseCount('clients', 14);
+        $this->assertDatabaseCount('property_allocations', 0);
+    }
+
+    public function test_demo_seeding_is_hidden_and_rejected_outside_local_environment(): void
+    {
+        $this->app['env'] = 'production';
+        $this->withoutMiddleware(PreventRequestForgery::class);
+
+        $this->get('/setup')->assertInertia(fn (Assert $page) => $page
+            ->component('Setup')
+            ->where('canSeedDemoData', false));
+
+        $this->post('/setup', [
+            'organization_name' => 'Northstar Properties',
+            'country' => 'NG',
+            'currency' => 'NGN',
+            'timezone' => 'Africa/Lagos',
+            'administrator_name' => 'Ada Okafor',
+            'administrator_email' => 'ada@example.test',
+            'password' => 'a-strong-password',
+            'password_confirmation' => 'a-strong-password',
+            'populate_demo_data' => true,
+        ])->assertForbidden();
+
+        $this->assertDatabaseCount('organizations', 0);
         $this->assertDatabaseCount('users', 0);
     }
 }

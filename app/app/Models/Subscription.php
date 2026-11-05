@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable([
     'organization_id',
@@ -65,6 +66,18 @@ class Subscription extends Model
     public function installmentSchedules(): HasMany
     {
         return $this->hasMany(InstallmentSchedule::class);
+    }
+
+    /** @return HasMany<PropertyAllocation, $this> */
+    public function allocations(): HasMany
+    {
+        return $this->hasMany(PropertyAllocation::class);
+    }
+
+    /** @return HasOne<PropertyAllocation, $this> */
+    public function latestAllocation(): HasOne
+    {
+        return $this->hasOne(PropertyAllocation::class)->latestOfMany('requested_at');
     }
 
     /** @return array<string, string> */

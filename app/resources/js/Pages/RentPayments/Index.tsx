@@ -15,6 +15,7 @@ type Schedule = {
     amountDue: string;
     amountPaid: string;
     pendingAmount: string;
+    arrearsAmount: string;
     availableAmount: string;
     currency: string;
     canSubmit: boolean;
@@ -46,7 +47,7 @@ const formatMoney = (amount: string, currency: string) => new Intl.NumberFormat(
 }).format(Number(amount));
 
 export default function Index({ schedules, payments, canSubmit, canReview }: Props) {
-    const submittableSchedules = schedules.filter((schedule) => schedule.canSubmit);
+    const submittableSchedules = schedules.filter((schedule) => schedule.canSubmit && schedule.availableAmount !== '0.00');
     const form = useForm<FormData>({
         rent_schedule_id: submittableSchedules[0]?.id ?? '',
         amount: submittableSchedules[0]?.availableAmount ?? '',
@@ -99,9 +100,10 @@ export default function Index({ schedules, payments, canSubmit, canReview }: Pro
 
                 <section className="space-y-3">
                     <div className="flex items-center gap-2 text-[#315447]"><WalletCards size={18} /><h2 className="font-display text-xl text-[#18342c]">Open rent charges</h2></div>
-                    <div className="overflow-x-auto border border-[#dfe5df] bg-white"><table className="w-full min-w-[800px] text-left">
-                        <thead className="bg-[#f8faf6] text-[11px] font-semibold uppercase tracking-[0.12em] text-[#77857f]"><tr><th className="px-5 py-3">Tenant / property</th><th className="px-5 py-3">Charge</th><th className="px-5 py-3">Due</th><th className="px-5 py-3 text-right">Due</th><th className="px-5 py-3 text-right">Paid</th><th className="px-5 py-3 text-right">Available</th></tr></thead>
-                        <tbody className="divide-y divide-[#edf0ec]">{schedules.map((schedule) => <tr key={schedule.id}><td className="px-5 py-4"><p className="text-sm font-medium text-[#29483e]">{schedule.tenantName}</p><p className="mt-1 text-xs text-[#7b8983]">{schedule.property} · {schedule.tenancyNumber}</p></td><td className="px-5 py-4 text-sm capitalize text-[#4c6259]">{schedule.chargeName ?? schedule.category.replaceAll('_', ' ')}</td><td className="px-5 py-4 text-sm text-[#4c6259]">{schedule.dueOn}</td><td className="px-5 py-4 text-right text-sm">{formatMoney(schedule.amountDue, schedule.currency)}</td><td className="px-5 py-4 text-right text-sm">{formatMoney(schedule.amountPaid, schedule.currency)}{Number(schedule.pendingAmount) > 0 && <span className="mt-1 block text-xs text-[#9a752f]">{formatMoney(schedule.pendingAmount, schedule.currency)} pending review</span>}</td><td className="px-5 py-4 text-right text-sm font-semibold text-[#29483e]">{formatMoney(schedule.availableAmount, schedule.currency)}</td></tr>)}{schedules.length === 0 && <tr><td colSpan={6} className="px-5 py-10 text-center text-sm text-[#718078]">There are no unpaid rent charges available in your organization scope.</td></tr>}</tbody>
+                    <p className="text-sm text-[#64756e]">Overdue balances count approved receipts only. Pending receipts remain in arrears until reviewed and are shown separately.</p>
+                    <div className="overflow-x-auto border border-[#dfe5df] bg-white"><table className="w-full min-w-[1000px] text-left">
+                        <thead className="bg-[#f8faf6] text-[11px] font-semibold uppercase tracking-[0.12em] text-[#77857f]"><tr><th className="px-5 py-3">Tenant / property</th><th className="px-5 py-3">Charge</th><th className="px-5 py-3">Due date</th><th className="px-5 py-3 text-right">Charge amount</th><th className="px-5 py-3 text-right">Paid</th><th className="px-5 py-3 text-right">Overdue balance</th><th className="px-5 py-3 text-right">Available to collect</th></tr></thead>
+                        <tbody className="divide-y divide-[#edf0ec]">{schedules.map((schedule) => <tr key={schedule.id}><td className="px-5 py-4"><p className="text-sm font-medium text-[#29483e]">{schedule.tenantName}</p><p className="mt-1 text-xs text-[#7b8983]">{schedule.property} · {schedule.tenancyNumber}</p></td><td className="px-5 py-4 text-sm capitalize text-[#4c6259]">{schedule.chargeName ?? schedule.category.replaceAll('_', ' ')}</td><td className="px-5 py-4 text-sm text-[#4c6259]">{schedule.dueOn}{Number(schedule.arrearsAmount) > 0 && <span className="mt-1 block text-xs font-semibold text-[#9a4f3d]">Overdue</span>}</td><td className="px-5 py-4 text-right text-sm">{formatMoney(schedule.amountDue, schedule.currency)}</td><td className="px-5 py-4 text-right text-sm">{formatMoney(schedule.amountPaid, schedule.currency)}{Number(schedule.pendingAmount) > 0 && <span className="mt-1 block text-xs text-[#9a752f]">{formatMoney(schedule.pendingAmount, schedule.currency)} pending review</span>}</td><td className="px-5 py-4 text-right text-sm font-semibold text-[#9a4f3d]">{Number(schedule.arrearsAmount) > 0 ? formatMoney(schedule.arrearsAmount, schedule.currency) : '-'}</td><td className="px-5 py-4 text-right text-sm font-semibold text-[#29483e]">{formatMoney(schedule.availableAmount, schedule.currency)}</td></tr>)}{schedules.length === 0 && <tr><td colSpan={7} className="px-5 py-10 text-center text-sm text-[#718078]">There are no unpaid rent charges available in your organization scope.</td></tr>}</tbody>
                     </table></div>
                 </section>
 

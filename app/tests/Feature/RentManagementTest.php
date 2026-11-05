@@ -15,6 +15,7 @@ use App\Support\Money;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Inertia\Testing\AssertableInertia as Assert;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\TestCase;
 
@@ -227,6 +228,36 @@ class RentManagementTest extends TestCase
             'transaction_reference' => 'BANK-RENT-002',
             'proof_document' => UploadedFile::fake()->create('payment.pdf', 12, 'application/pdf'),
         ])->assertStatus(409);
+    }
+
+    public function test_rent_payment_index_counts_only_approved_receipts_toward_overdue_balances(): void
+    {
+        $owner = $this->installOwner();
+        $organization = $owner->organizations()->firstOrFail();
+        $client = $this->createVerifiedClient($owner, $organization->id);
+        $property = $this->createRentableProperty($organization->id);
+        $tenancy = $this->createActiveTenancy($owner, $organization->id, $client, $property);
+        $schedule = $this->createSchedule($tenancy, 'rent', '100.00');
+        $schedule->update(['due_on' => today()->subDay()->toDateString()]);
+
+        $approvedPayment = $this->createPayment($organization->id, $tenancy->id, '40.00', 'RENT-APPROVED');
+        app(RentPaymentService::class)->review($approvedPayment, $owner, 'approved', allocations: [
+            $schedule->id => '40.00',
+        ]);
+
+        $pendingPayment = $this->createPayment($organization->id, $tenancy->id, '60.00', 'RENT-PENDING');
+        $pendingPayment->schedules()->attach($schedule->id, ['amount' => '60.00']);
+
+        $this->actingAs($owner)
+            ->get(route('rent-payments.index', absolute: false))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('RentPayments/Index')
+                ->has('schedules', 1)
+                ->where('schedules.0.amountPaid', '40.00')
+                ->where('schedules.0.pendingAmount', '60.00')
+                ->where('schedules.0.arrearsAmount', '60.00')
+                ->where('schedules.0.availableAmount', '0.00'));
     }
 
     private function createSchedule(Tenancy $tenancy, string $category, string $amount): RentSchedule

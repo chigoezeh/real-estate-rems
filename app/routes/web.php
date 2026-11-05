@@ -1,13 +1,14 @@
 <?php
 
-use App\Http\Controllers\ClientController;
 use App\Http\Controllers\ChargeController;
+use App\Http\Controllers\ClientController;
 use App\Http\Controllers\InspectionController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\MaintenanceController;
 use App\Http\Controllers\OrganizationController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\PropertyAllocationController;
 use App\Http\Controllers\RentPaymentController;
 use App\Http\Controllers\RoleController;
 use App\Http\Controllers\SetupController;
@@ -81,6 +82,9 @@ Route::middleware('auth')->group(function () {
     Route::get('/payments/{payment}/proof', [PaymentController::class, 'downloadProof'])->name('payments.proof');
     Route::get('/subscriptions', [SubscriptionController::class, 'index'])->name('subscriptions.index');
     Route::post('/subscriptions', [SubscriptionController::class, 'store'])->name('subscriptions.store');
+    Route::post('/subscriptions/{subscription}/allocations', [PropertyAllocationController::class, 'store'])->name('subscriptions.allocations.store');
+    Route::patch('/property-allocations/{propertyAllocation}/approve', [PropertyAllocationController::class, 'approve'])->name('property-allocations.approve');
+    Route::patch('/property-allocations/{propertyAllocation}/reject', [PropertyAllocationController::class, 'reject'])->name('property-allocations.reject');
     Route::get('/clients', [ClientController::class, 'index'])->name('clients.index');
     Route::post('/clients', [ClientController::class, 'store'])->name('clients.store');
     Route::patch('/clients/{client}/kyc', [ClientController::class, 'reviewKyc'])->name('clients.kyc.review');

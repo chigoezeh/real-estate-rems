@@ -8,6 +8,7 @@ use App\Models\Client;
 use App\Models\InstallmentSchedule;
 use App\Models\Organization;
 use App\Models\OrganizationChargeType;
+use App\Models\Payment;
 use App\Models\Project;
 use App\Models\PropertyUnit;
 use App\Models\Reservation;
@@ -15,6 +16,7 @@ use App\Models\Subscription;
 use App\Support\Money;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -39,12 +41,45 @@ class SubscriptionController extends Controller
         $organizationIds = Organization::accessibleIdsFor($user, 'subscriptions.view');
 
         $subscriptions = Subscription::query()
-            ->with(['client:id,full_name,phone', 'project:id,name', 'propertyUnit:id,code,phase,block'])
+            ->with([
+                'client:id,full_name,phone',
+                'project:id,name',
+                'propertyUnit:id,code,phase,block,status',
+                'propertyUnit.titleRecords' => fn ($query) => $query
+                    ->where('verification_status', 'verified')
+                    ->whereNotNull('verified_by_user_id')
+                    ->whereNotNull('verified_at')
+                    ->select(['id', 'organization_id', 'property_unit_id', 'reference_number']),
+                'latestAllocation:id,subscription_id,land_title_record_id,allocation_reference,status,allocated_at,rejection_reason',
+                'latestAllocation.landTitleRecord:id,reference_number',
+            ])
             ->whereIn('organization_id', $organizationIds)
             ->latest()
             ->limit(100)
-            ->get()
-            ->map(fn (Subscription $subscription): array => [
+            ->get();
+        $allocationSummaries = $this->allocationSummaries($subscriptions);
+        $canManageAllocations = $user->hasPermission('inventory.manage');
+        $subscriptions = $subscriptions->map(function (Subscription $subscription) use ($allocationSummaries, $user, $canManageAllocations): array {
+            $latestAllocation = $subscription->latestAllocation;
+            $summary = $allocationSummaries[$subscription->id] ?? [
+                'hasSchedules' => false,
+                'fullyPaid' => false,
+                'ledgerReconciled' => true,
+            ];
+            $hasVerifiedTitle = $subscription->propertyUnit->titleRecords
+                ->contains(fn ($title): bool => $title->organization_id === $subscription->organization_id);
+            $allocationBlocker = match (true) {
+                $subscription->status !== 'active' => 'Only active subscriptions can be allocated.',
+                $subscription->propertyUnit->status !== 'under_installment' => 'The property is not under an active subscription.',
+                ! $summary['hasSchedules'] => 'The subscription has no payment schedules.',
+                ! $summary['ledgerReconciled'] => 'Payment ledger reconciliation is required.',
+                ! $summary['fullyPaid'] => 'All installments and charges must be fully paid.',
+                ! $hasVerifiedTitle => 'A verified property title record is required.',
+                default => null,
+            };
+            $hasActiveAllocation = in_array($latestAllocation?->status, ['pending_approval', 'approved'], true);
+
+            return [
                 'id' => $subscription->id,
                 'number' => $subscription->subscription_number,
                 'clientName' => $subscription->client->full_name,
@@ -57,7 +92,21 @@ class SubscriptionController extends Controller
                 'charges' => $subscription->charge_snapshot ?? [],
                 'status' => $subscription->status,
                 'createdAt' => $subscription->created_at?->toIso8601String(),
-            ])
+                'allocation' => $latestAllocation === null ? null : [
+                    'id' => $latestAllocation->id,
+                    'reference' => $latestAllocation->allocation_reference,
+                    'status' => $latestAllocation->status,
+                    'titleReference' => $latestAllocation->landTitleRecord?->reference_number,
+                    'allocatedAt' => $latestAllocation->allocated_at?->toDateString(),
+                    'rejectionReason' => $latestAllocation->rejection_reason,
+                ],
+                'canRequestAllocation' => $user->hasPermission('subscriptions.manage')
+                    && $allocationBlocker === null
+                    && ! $hasActiveAllocation,
+                'allocationBlocker' => $hasActiveAllocation ? null : $allocationBlocker,
+                'canReviewAllocation' => $canManageAllocations && $latestAllocation?->status === 'pending_approval',
+            ];
+        })
             ->values();
 
         $manageableOrganizationIds = Organization::accessibleIdsFor($user, 'subscriptions.manage');
@@ -325,6 +374,50 @@ class SubscriptionController extends Controller
     private function effectiveLandPrice(PropertyUnit $unit): string
     {
         return Money::fromMinorUnits($this->effectiveLandPriceCents($unit));
+    }
+
+    /**
+     * @param  Collection<int, Subscription>  $subscriptions
+     * @return array<string, array{hasSchedules: bool, fullyPaid: bool, ledgerReconciled: bool}>
+     */
+    private function allocationSummaries(Collection $subscriptions): array
+    {
+        if ($subscriptions->isEmpty()) {
+            return [];
+        }
+
+        $schedules = InstallmentSchedule::query()
+            ->whereIn('subscription_id', $subscriptions->pluck('id'))
+            ->get(['id', 'subscription_id', 'amount', 'amount_paid']);
+        $approvedPayments = Payment::query()
+            ->whereIn('installment_schedule_id', $schedules->pluck('id'))
+            ->where('status', 'approved')
+            ->get(['installment_schedule_id', 'amount'])
+            ->groupBy('installment_schedule_id')
+            ->map(fn (Collection $payments): int => $payments->sum(
+                fn (Payment $payment): int => Money::toMinorUnits($payment->amount),
+            ));
+        $summaries = $subscriptions->mapWithKeys(fn (Subscription $subscription): array => [
+            $subscription->id => [
+                'hasSchedules' => false,
+                'fullyPaid' => true,
+                'ledgerReconciled' => true,
+            ],
+        ])->all();
+
+        foreach ($schedules as $schedule) {
+            $summary = &$summaries[$schedule->subscription_id];
+            $summary['hasSchedules'] = true;
+            $amountCents = Money::toMinorUnits($schedule->amount);
+            $recordedPaidCents = Money::toMinorUnits($schedule->amount_paid);
+            $ledgerPaidCents = $approvedPayments->get($schedule->id, 0);
+            $summary['ledgerReconciled'] = $summary['ledgerReconciled']
+                && $recordedPaidCents === $ledgerPaidCents;
+            $summary['fullyPaid'] = $summary['fullyPaid'] && $ledgerPaidCents === $amountCents;
+            unset($summary);
+        }
+
+        return $summaries;
     }
 
     private function effectiveLandPriceCents(PropertyUnit $unit): int

@@ -8,6 +8,7 @@ use App\Models\Organization;
 use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
+use Database\Seeders\DevelopmentDemoSeeder;
 use Database\Seeders\GeographySeeder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -24,7 +25,9 @@ class SetupController extends Controller
             return redirect()->route('login');
         }
 
-        return Inertia::render('Setup');
+        return Inertia::render('Setup', [
+            'canSeedDemoData' => app()->environment('local'),
+        ]);
     }
 
     public function store(Request $request): RedirectResponse
@@ -32,6 +35,9 @@ class SetupController extends Controller
         if (InstallationState::isInstalled()) {
             return redirect()->route('login');
         }
+
+        $populateDemoData = $request->boolean('populate_demo_data');
+        abort_if($populateDemoData && ! app()->environment('local'), 403);
 
         $validated = $request->validate([
             'organization_name' => ['required', 'string', 'max:255'],
@@ -41,9 +47,10 @@ class SetupController extends Controller
             'administrator_name' => ['required', 'string', 'max:255'],
             'administrator_email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:users,email'],
             'password' => ['required', 'string', 'min:12', 'confirmed'],
+            'populate_demo_data' => ['sometimes', 'boolean'],
         ]);
 
-        $administrator = DB::transaction(function () use ($request, $validated): ?User {
+        $administrator = DB::transaction(function () use ($request, $validated, $populateDemoData): ?User {
             $installationState = InstallationState::query()->lockForUpdate()->firstOrFail();
 
             if ($installationState->is_installed) {
@@ -136,6 +143,10 @@ class SetupController extends Controller
                 'is_installed' => true,
                 'installed_at' => now(),
             ]);
+
+            if ($populateDemoData) {
+                app(DevelopmentDemoSeeder::class)->seed($organization, $administrator);
+            }
 
             return $administrator;
         });
