@@ -7,6 +7,7 @@ use App\Models\AuditLog;
 use App\Models\Organization;
 use App\Models\RentPayment;
 use App\Models\RentSchedule;
+use App\Models\Tenancy;
 use App\Models\User;
 use App\Support\Money;
 use Illuminate\Http\RedirectResponse;
@@ -30,9 +31,16 @@ class RentPaymentController extends Controller
         $reviewableOrganizationIds = Organization::accessibleIdsFor($user, 'rent_payments.review');
 
         $schedules = RentSchedule::query()
-            ->with(['tenancy.organization:id,currency', 'tenancy.tenant:id,full_name', 'tenancy.propertyUnit:id,project_id,phase,block,code', 'tenancy.propertyUnit.project:id,name', 'payments'])
+            ->with([
+                'tenancy.organization:id,currency',
+                'tenancy.tenant:id,full_name',
+                'tenancy.propertyUnit:id,project_id,phase,block,code',
+                'tenancy.propertyUnit.project:id,name',
+                'payments',
+                'depositDeductions.reconciliation',
+            ])
             ->whereHas('tenancy', fn ($query) => $query->whereIn('organization_id', $organizationIds)->whereIn('status', ['active', 'completed']))
-            ->where('status', '!=', 'paid')
+            ->whereNotIn('status', ['paid', 'written_off'])
             ->orderBy('due_on')
             ->limit(500)
             ->get()
@@ -43,7 +51,10 @@ class RentPaymentController extends Controller
                 $pendingCents = $schedule->payments
                     ->where('status', 'pending')
                     ->sum(fn (RentPayment $payment): int => Money::toMinorUnits($payment->pivot->amount));
-                $amountDueCents = Money::toMinorUnits($schedule->amount_due);
+                $deductedCents = $schedule->depositDeductions
+                    ->filter(fn ($deduction): bool => in_array($deduction->reconciliation->status, ['finalized', 'refunded'], true))
+                    ->sum(fn ($deduction): int => Money::toMinorUnits($deduction->amount));
+                $amountDueCents = max(0, Money::toMinorUnits($schedule->amount_due) - $deductedCents);
                 $arrearsCents = $schedule->due_on->lt(today())
                     ? max(0, $amountDueCents - $paidCents)
                     : 0;
@@ -56,7 +67,7 @@ class RentPaymentController extends Controller
                     'category' => $schedule->category,
                     'chargeName' => $schedule->charge_name_snapshot,
                     'dueOn' => $schedule->due_on->toDateString(),
-                    'amountDue' => $schedule->amount_due,
+                    'amountDue' => Money::fromMinorUnits($amountDueCents),
                     'amountPaid' => Money::fromMinorUnits($paidCents),
                     'pendingAmount' => Money::fromMinorUnits($pendingCents),
                     'arrearsAmount' => Money::fromMinorUnits($arrearsCents),
@@ -134,9 +145,18 @@ class RentPaymentController extends Controller
 
         try {
             DB::transaction(function () use ($request, $user, $validated, $schedule, $proofPath): void {
+                $tenancy = Tenancy::query()->lockForUpdate()->findOrFail($schedule->tenancy_id);
                 $lockedSchedule = RentSchedule::query()->lockForUpdate()->findOrFail($schedule->id);
-                $tenancy = $lockedSchedule->tenancy()->lockForUpdate()->firstOrFail();
+                abort_unless($lockedSchedule->tenancy_id === $tenancy->id, 404);
                 abort_unless(in_array($tenancy->status, ['active', 'completed'], true), 409, 'Rent can only be collected for active or completed tenancy charges.');
+                abort_unless($lockedSchedule->status !== 'written_off', 409, 'A written-off rent charge can no longer be collected.');
+                if ($lockedSchedule->category === 'security_deposit') {
+                    abort_unless(
+                        ! $tenancy->depositReconciliation()->whereIn('status', ['finalized', 'refunded'])->exists(),
+                        409,
+                        'Security-deposit collection is closed after the reconciliation is finalized.',
+                    );
+                }
 
                 $allocatedAmounts = DB::table('rent_payment_allocations')
                     ->join('rent_payments', 'rent_payments.id', '=', 'rent_payment_allocations.rent_payment_id')
@@ -144,7 +164,9 @@ class RentPaymentController extends Controller
                     ->whereIn('rent_payments.status', ['pending', 'approved'])
                     ->pluck('rent_payment_allocations.amount');
                 $reservedCents = $allocatedAmounts->sum(fn (string $amount): int => Money::toMinorUnits($amount));
-                $outstandingCents = Money::toMinorUnits($lockedSchedule->amount_due) - $reservedCents;
+                $outstandingCents = Money::toMinorUnits($lockedSchedule->amount_due)
+                    - $lockedSchedule->reconciledDepositDeductionCents()
+                    - $reservedCents;
                 $paymentCents = Money::toMinorUnits($validated['amount']);
                 abort_unless($paymentCents <= $outstandingCents, 409, 'Submitted payments exceed the unallocated rent charge balance.');
 

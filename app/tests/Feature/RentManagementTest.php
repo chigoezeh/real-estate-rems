@@ -10,6 +10,8 @@ use App\Models\PropertyUnit;
 use App\Models\RentPayment;
 use App\Models\RentSchedule;
 use App\Models\Tenancy;
+use App\Models\TenancyDepositReconciliation;
+use App\Models\TenancyNotice;
 use App\Models\User;
 use App\Support\Money;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -143,6 +145,11 @@ class RentManagementTest extends TestCase
         $client = $this->createVerifiedClient($owner, $organization->id);
         $property = $this->createRentableProperty($organization->id);
         $tenancy = $this->createActiveTenancy($owner, $organization->id, $client, $property);
+        $sourceDepositSchedule = $this->createSchedule($tenancy, 'security_deposit', '100.00');
+        $sourceDepositPayment = $this->createPayment($organization->id, $tenancy->id, '100.00', 'RENEWAL-DEPOSIT-001');
+        app(RentPaymentService::class)->review($sourceDepositPayment, $owner, 'approved', allocations: [
+            $sourceDepositSchedule->id => '100.00',
+        ]);
         $currentEnd = today()->addDays(30);
         $tenancy->update(['ends_on' => $currentEnd->toDateString()]);
         $property->update(['rental_status' => 'occupied']);
@@ -168,6 +175,7 @@ class RentManagementTest extends TestCase
                 ->has('tenancies', 1)
                 ->where('tenancies.0.renewal.startsOn', $renewalStart->toDateString())
                 ->where('tenancies.0.renewal.endsOn', $renewalEnd->toDateString())
+                ->where('tenancies.0.depositReceivedAmount', '100.00')
                 ->where('tenancies.0.renewal.property.id', $property->id));
 
         $this->actingAs($owner)->post(route('tenancies.store', absolute: false), [
@@ -204,6 +212,8 @@ class RentManagementTest extends TestCase
 
         $this->assertSame('completed', $tenancy->fresh()->status);
         $this->assertSame('active', $renewal->fresh()->status);
+        $this->assertSame('100.00', $renewal->fresh()->security_deposit_carried_forward);
+        $this->assertSame('100.00', $renewal->rentSchedules()->where('category', 'security_deposit')->firstOrFail()->amount_due);
         $this->assertSame(1, $renewal->rentSchedules()->where('category', 'rent')->count());
         $this->assertSame('occupied', $property->fresh()->rental_status);
         $this->assertDatabaseHas('audit_logs', [
@@ -211,6 +221,191 @@ class RentManagementTest extends TestCase
             'action' => 'tenancy.renewed',
             'subject_id' => $tenancy->id,
         ]);
+    }
+
+    public function test_notice_handover_and_deposit_reconciliation_use_approved_receipts_and_auditable_refunds(): void
+    {
+        Storage::fake('local');
+        $owner = $this->installOwner();
+        $organization = $owner->organizations()->firstOrFail();
+        $client = $this->createVerifiedClient($owner, $organization->id);
+        $property = $this->createRentableProperty($organization->id);
+        $tenancy = $this->createActiveTenancy($owner, $organization->id, $client, $property);
+        $depositSchedule = $this->createSchedule($tenancy, 'security_deposit', '500.00');
+        $approvedPayment = $this->createPayment($organization->id, $tenancy->id, '400.00', 'DEPOSIT-APPROVED');
+        app(RentPaymentService::class)->review($approvedPayment, $owner, 'approved', allocations: [
+            $depositSchedule->id => '400.00',
+        ]);
+        $pendingPayment = $this->createPayment($organization->id, $tenancy->id, '25.00', 'DEPOSIT-PENDING');
+        $pendingPayment->schedules()->attach($depositSchedule->id, ['amount' => '25.00']);
+        $finalRentSchedule = $this->createSchedule($tenancy, 'rent', '100.00');
+        $finalRentSchedule->update(['due_on' => today()->subDay()->toDateString()]);
+        $finalRentPayment = $this->createPayment($organization->id, $tenancy->id, '40.00', 'FINAL-RENT-PARTIAL');
+        app(RentPaymentService::class)->review($finalRentPayment, $owner, 'approved', allocations: [
+            $finalRentSchedule->id => '40.00',
+        ]);
+
+        $noticeData = [
+            'notice_type' => 'tenant',
+            'notice_on' => today()->toDateString(),
+            'proposed_vacate_on' => today()->toDateString(),
+            'reason' => 'Tenant is relocating for work.',
+        ];
+        $this->actingAs($owner)->post(route('tenancies.notices.store', $tenancy, absolute: false), $noticeData)
+            ->assertRedirect(route('tenancies.index', absolute: false));
+        $notice = TenancyNotice::query()->where('tenancy_id', $tenancy->id)->firstOrFail();
+        $this->actingAs($owner)->post(route('tenancies.notices.store', $tenancy, absolute: false), $noticeData)
+            ->assertStatus(409);
+
+        $this->actingAs($owner)->patch(route('tenancy-notices.handover', $notice, absolute: false), [
+            'handed_over_on' => today()->toDateString(),
+            'handover_notes' => 'Keys returned and inspection completed.',
+        ])->assertRedirect(route('tenancies.index', absolute: false));
+        $this->assertSame('completed', $tenancy->fresh()->status);
+        $this->assertSame('available', $property->fresh()->rental_status);
+        $this->assertSame('completed', $notice->fresh()->status);
+
+        $this->actingAs($owner)->post(route('tenancies.deposit-reconciliation.store', $tenancy, absolute: false), [
+            'deductions' => [[
+                'category' => 'damage',
+                'description' => 'Repair of damaged door',
+                'amount' => '401.00',
+                'evidence_reference' => 'INSPECTION-12',
+            ]],
+        ])->assertSessionHasErrors('deductions');
+        $this->assertDatabaseCount('tenancy_deposit_reconciliations', 0);
+
+        $this->actingAs($owner)->post(route('tenancies.deposit-reconciliation.store', $tenancy, absolute: false), [
+            'deductions' => [
+                [
+                    'category' => 'damage',
+                    'description' => 'Repair of damaged door',
+                    'amount' => '250.00',
+                    'evidence_reference' => 'INSPECTION-12',
+                ],
+                [
+                    'category' => 'unpaid_rent',
+                    'description' => 'Final rent balance',
+                    'amount' => '50.00',
+                    'evidence_reference' => null,
+                    'rent_schedule_id' => $finalRentSchedule->id,
+                ],
+            ],
+        ])->assertRedirect(route('tenancies.index', absolute: false));
+
+        $reconciliation = TenancyDepositReconciliation::query()->where('tenancy_id', $tenancy->id)->firstOrFail();
+        $this->actingAs($owner)->patch(route('tenancies.deposit-reconciliation.finalize', $reconciliation, absolute: false))
+            ->assertStatus(409);
+        $this->assertSame('draft', $reconciliation->fresh()->status);
+
+        app(RentPaymentService::class)->review($pendingPayment, $owner, 'rejected', 'Unverified duplicate receipt.');
+        $this->actingAs($owner)->patch(route('tenancies.deposit-reconciliation.finalize', $reconciliation, absolute: false))
+            ->assertRedirect(route('tenancies.index', absolute: false));
+        $reconciliation->refresh();
+        $this->assertSame('finalized', $reconciliation->status);
+        $this->assertSame('400.00', $reconciliation->deposit_received_amount);
+        $this->assertSame('300.00', $reconciliation->deduction_total);
+        $this->assertSame('100.00', $reconciliation->refund_due_amount);
+        $this->assertCount(2, $reconciliation->deductions);
+        $this->assertSame('partially_paid', $finalRentSchedule->fresh()->status);
+        $this->assertSame('written_off', $depositSchedule->fresh()->status);
+        $this->assertSame($finalRentSchedule->id, $reconciliation->deductions()->where('category', 'unpaid_rent')->firstOrFail()->rent_schedule_id);
+
+        $this->actingAs($owner)
+            ->get(route('rent-payments.index', absolute: false))
+            ->assertInertia(fn (Assert $page) => $page
+                ->has('schedules', 1)
+                ->where('schedules.0.amountDue', '50.00')
+                ->where('schedules.0.amountPaid', '40.00')
+                ->where('schedules.0.arrearsAmount', '10.00'));
+
+        $this->actingAs($owner)->patch(route('tenancies.deposit-reconciliation.refund', $reconciliation, absolute: false), [
+            'refund_reference' => 'REFUND-BANK-001',
+            'refund_notes' => 'Returned by bank transfer.',
+        ])->assertRedirect(route('tenancies.index', absolute: false));
+        $this->assertSame('refunded', $reconciliation->fresh()->status);
+        $this->assertSame('REFUND-BANK-001', $reconciliation->fresh()->refund_reference);
+
+        $latePendingPayment = $this->createPayment($organization->id, $tenancy->id, '25.00', 'DEPOSIT-PENDING-AFTER-FINAL');
+        $latePendingPayment->schedules()->attach($depositSchedule->id, ['amount' => '25.00']);
+        try {
+            app(RentPaymentService::class)->review($latePendingPayment, $owner, 'approved', allocations: [
+                $depositSchedule->id => '25.00',
+            ]);
+            $this->fail('A security-deposit receipt cannot be approved after reconciliation.');
+        } catch (HttpException $exception) {
+            $this->assertSame(409, $exception->getStatusCode());
+        }
+
+        $this->actingAs($owner)->post(route('rent-payments.store', absolute: false), [
+            'rent_schedule_id' => $depositSchedule->id,
+            'amount' => '50.00',
+            'payment_channel' => 'bank_transfer',
+            'transaction_reference' => 'DEPOSIT-LATE',
+            'proof_document' => UploadedFile::fake()->create('payment.pdf', 12, 'application/pdf'),
+        ])->assertStatus(409);
+        $this->assertDatabaseHas('audit_logs', [
+            'organization_id' => $organization->id,
+            'action' => 'tenancy.handover_completed',
+            'subject_id' => $tenancy->id,
+        ]);
+        $this->assertDatabaseHas('audit_logs', [
+            'organization_id' => $organization->id,
+            'action' => 'tenancy.deposit_refunded',
+            'subject_id' => $tenancy->id,
+        ]);
+    }
+
+    public function test_early_handover_requires_a_mutual_agreement_notice(): void
+    {
+        $owner = $this->installOwner();
+        $organization = $owner->organizations()->firstOrFail();
+        $client = $this->createVerifiedClient($owner, $organization->id);
+        $property = $this->createRentableProperty($organization->id);
+        $tenancy = $this->createActiveTenancy($owner, $organization->id, $client, $property);
+        $property->update(['rental_status' => 'occupied']);
+        $renewalStart = $tenancy->ends_on->copy()->addDay();
+        $this->actingAs($owner)->post(route('tenancies.store', absolute: false), [
+            'client_id' => $client->id,
+            'property_unit_id' => $property->id,
+            'renewal_of_tenancy_id' => $tenancy->id,
+            'starts_on' => $renewalStart->toDateString(),
+            'ends_on' => $renewalStart->copy()->addYearNoOverflow()->subDay()->toDateString(),
+            'rent_frequency' => 'annual',
+            'rent_amount' => '1100.00',
+            'security_deposit' => '100.00',
+            'service_charge' => '50.00',
+        ])->assertRedirect(route('tenancies.index', absolute: false));
+        $renewal = Tenancy::query()->where('renewal_of_tenancy_id', $tenancy->id)->firstOrFail();
+        $noticeData = [
+            'notice_type' => 'tenant',
+            'notice_on' => today()->toDateString(),
+            'proposed_vacate_on' => today()->addDay()->toDateString(),
+            'reason' => 'Tenant requested an early departure.',
+        ];
+
+        $this->actingAs($owner)->post(route('tenancies.notices.store', $tenancy, absolute: false), $noticeData)
+            ->assertRedirect(route('tenancies.index', absolute: false));
+        $this->assertSame('cancelled', $renewal->fresh()->status);
+        $notice = TenancyNotice::query()->where('tenancy_id', $tenancy->id)->firstOrFail();
+        $this->actingAs($owner)->patch(route('tenancy-notices.handover', $notice, absolute: false), [
+            'handed_over_on' => today()->toDateString(),
+        ])->assertStatus(422);
+        $this->assertSame('active', $tenancy->fresh()->status);
+        $this->assertSame('occupied', $property->fresh()->rental_status);
+
+        $this->actingAs($owner)->patch(route('tenancy-notices.withdraw', $notice, absolute: false))
+            ->assertRedirect(route('tenancies.index', absolute: false));
+        $this->actingAs($owner)->post(route('tenancies.notices.store', $tenancy, absolute: false), [
+            ...$noticeData,
+            'notice_type' => 'mutual_agreement',
+        ])->assertRedirect(route('tenancies.index', absolute: false));
+        $mutualNotice = TenancyNotice::query()->where('tenancy_id', $tenancy->id)->where('status', 'served')->firstOrFail();
+        $this->actingAs($owner)->patch(route('tenancy-notices.handover', $mutualNotice, absolute: false), [
+            'handed_over_on' => today()->toDateString(),
+            'handover_notes' => 'Early surrender agreed by both parties.',
+        ])->assertRedirect(route('tenancies.index', absolute: false));
+        $this->assertSame('completed', $tenancy->fresh()->status);
     }
 
     public function test_rental_charge_policies_are_snapshotted_and_generate_recurring_or_one_time_schedules(): void

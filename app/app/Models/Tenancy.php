@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable([
     'organization_id',
@@ -21,6 +22,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'rent_frequency',
     'rent_amount',
     'security_deposit',
+    'security_deposit_carried_forward',
     'service_charge',
     'next_review_on',
     'agreement_path',
@@ -61,6 +63,18 @@ class Tenancy extends Model
         return $this->hasMany(self::class, 'renewal_of_tenancy_id');
     }
 
+    /** @return HasMany<TenancyNotice, $this> */
+    public function notices(): HasMany
+    {
+        return $this->hasMany(TenancyNotice::class);
+    }
+
+    /** @return HasOne<TenancyDepositReconciliation, $this> */
+    public function depositReconciliation(): HasOne
+    {
+        return $this->hasOne(TenancyDepositReconciliation::class);
+    }
+
     /** @return HasMany<RentSchedule, $this> */
     public function rentSchedules(): HasMany
     {
@@ -88,6 +102,7 @@ class Tenancy extends Model
             'next_review_on' => 'date',
             'rent_amount' => 'decimal:2',
             'security_deposit' => 'decimal:2',
+            'security_deposit_carried_forward' => 'decimal:2',
             'service_charge' => 'decimal:2',
             'terms_snapshot' => 'array',
             'policy_snapshot' => 'array',

@@ -2,11 +2,13 @@
 
 namespace App\Models;
 
+use App\Support\Money;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable([
     'tenancy_id',
@@ -44,6 +46,20 @@ class RentSchedule extends Model
         return $this->belongsToMany(RentPayment::class, 'rent_payment_allocations')
             ->withPivot('amount')
             ->withTimestamps();
+    }
+
+    /** @return HasMany<TenancyDepositDeduction, $this> */
+    public function depositDeductions(): HasMany
+    {
+        return $this->hasMany(TenancyDepositDeduction::class);
+    }
+
+    public function reconciledDepositDeductionCents(): int
+    {
+        return $this->depositDeductions()
+            ->whereHas('reconciliation', fn ($query) => $query->whereIn('status', ['finalized', 'refunded']))
+            ->pluck('amount')
+            ->sum(fn (string $amount): int => Money::toMinorUnits($amount));
     }
 
     /** @return array<string, string> */

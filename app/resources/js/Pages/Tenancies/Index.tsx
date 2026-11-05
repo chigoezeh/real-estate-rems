@@ -23,6 +23,29 @@ type Property = {
     areaSqm: string | null;
     chargePolicies: ChargePolicy[];
 };
+type Notice = {
+    id: string;
+    type: string;
+    noticeOn: string;
+    proposedVacateOn: string;
+    reason: string;
+    status: string;
+    handedOverOn: string | null;
+    handoverNotes: string | null;
+};
+type DepositDeduction = { category: string; description: string; amount: string; evidence_reference: string | null; rent_schedule_id: string | null };
+type UnpaidRentSchedule = { id: string; period: string; amountDue: string; pendingAmount: string };
+type DepositReconciliation = {
+    id: string;
+    status: string;
+    depositReceivedAmount: string;
+    deductionTotal: string;
+    refundDueAmount: string;
+    refundedAt: string | null;
+    refundReference: string | null;
+    refundNotes: string | null;
+    deductions: DepositDeduction[];
+};
 type Tenancy = {
     id: string;
     number: string;
@@ -38,8 +61,14 @@ type Tenancy = {
     serviceCharge: string;
     additionalChargesTotal: string;
     additionalCharges: Array<{ name: string; total_amount: string }>;
+    depositReceivedAmount: string;
+    depositCarriedForwardAmount: string;
+    notices: Notice[];
+    unpaidRentSchedules: UnpaidRentSchedule[];
+    depositReconciliation: DepositReconciliation | null;
     currency: string;
     renewalOfNumber: string | null;
+    renewedByNumber: string | null;
     renewal: { clientId: string; startsOn: string; endsOn: string; property: Property } | null;
     canManage: boolean;
 };
@@ -55,6 +84,10 @@ type FormData = {
     service_charge: string;
     charge_quotes: Record<string, string>;
 };
+type NoticeFormData = { notice_type: string; notice_on: string; proposed_vacate_on: string; reason: string };
+type HandoverFormData = { handed_over_on: string; handover_notes: string };
+type ReconciliationFormData = { deductions: DepositDeduction[] };
+type RefundFormData = { refund_reference: string; refund_notes: string };
 type Props = { tenancies: Tenancy[]; clients: Client[]; properties: Property[]; canManage: boolean };
 
 const emptyForm = (): FormData => ({
@@ -69,17 +102,47 @@ const emptyForm = (): FormData => ({
     service_charge: '0',
     charge_quotes: {},
 });
+const emptyDeduction = (): DepositDeduction => ({
+    category: 'damage',
+    description: '',
+    amount: '',
+    evidence_reference: '',
+    rent_schedule_id: '',
+});
+const normalizedDeductions = (deductions: DepositDeduction[]) => deductions.map((deduction) => ({
+    category: deduction.category,
+    description: deduction.description,
+    amount: deduction.amount,
+    evidence_reference: deduction.evidence_reference ?? '',
+    rent_schedule_id: deduction.rent_schedule_id ?? '',
+}));
 
 const formatMoney = (amount: string, currency: string) => new Intl.NumberFormat(undefined, {
     style: 'currency',
     currency,
     maximumFractionDigits: 2,
 }).format(Number(amount));
+const localDateString = () => {
+    const date = new Date();
+    date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+    return date.toISOString().slice(0, 10);
+};
 
 export default function Index({ tenancies, clients, properties, canManage }: Props) {
     const [isAdding, setIsAdding] = useState(false);
     const [renewalSource, setRenewalSource] = useState<Tenancy | null>(null);
+    const [selectedTenancyId, setSelectedTenancyId] = useState<string | null>(null);
     const form = useForm<FormData>(emptyForm());
+    const noticeForm = useForm<NoticeFormData>({ notice_type: 'tenant', notice_on: '', proposed_vacate_on: '', reason: '' });
+    const handoverForm = useForm<HandoverFormData>({ handed_over_on: '', handover_notes: '' });
+    const reconciliationForm = useForm<ReconciliationFormData>({ deductions: [emptyDeduction()] });
+    const refundForm = useForm<RefundFormData>({ refund_reference: '', refund_notes: '' });
+    const selectedTenancy = tenancies.find((tenancy) => tenancy.id === selectedTenancyId) ?? null;
+    const servedNotice = selectedTenancy?.notices.find((notice) => notice.status === 'served') ?? null;
+    const completedNotice = selectedTenancy?.notices.find((notice) => notice.status === 'completed') ?? null;
+    const hasUnsavedReconciliation = selectedTenancy?.depositReconciliation?.status === 'draft'
+        && JSON.stringify(normalizedDeductions(reconciliationForm.data.deductions))
+            !== JSON.stringify(normalizedDeductions(selectedTenancy.depositReconciliation.deductions));
     const selectedProperty = properties.find((property) => property.id === form.data.property_unit_id)
         ?? renewalSource?.renewal?.property;
     const activeChargePolicies = selectedProperty?.chargePolicies ?? [];
@@ -128,6 +191,65 @@ export default function Index({ tenancies, clients, properties, canManage }: Pro
                 setRenewalSource(null);
             },
         });
+    };
+
+    const openCloseout = (tenancy: Tenancy) => {
+        const today = localDateString();
+        const proposedVacateOn = tenancy.endsOn && tenancy.endsOn >= today ? tenancy.endsOn : today;
+        setSelectedTenancyId(tenancy.id);
+        noticeForm.clearErrors();
+        noticeForm.setData({ notice_type: 'tenant', notice_on: today, proposed_vacate_on: proposedVacateOn, reason: '' });
+        handoverForm.clearErrors();
+        handoverForm.setData({
+            handed_over_on: proposedVacateOn <= today ? proposedVacateOn : today,
+            handover_notes: '',
+        });
+        reconciliationForm.clearErrors();
+        const deductions = tenancy.depositReconciliation?.deductions.length
+            ? tenancy.depositReconciliation.deductions
+            : [];
+        reconciliationForm.setData({
+            deductions,
+        });
+        refundForm.clearErrors();
+        refundForm.setData({ refund_reference: '', refund_notes: '' });
+    };
+
+    const submitNotice: FormEventHandler = (event) => {
+        event.preventDefault();
+        if (!selectedTenancy) return;
+        noticeForm.post(route('tenancies.notices.store', selectedTenancy.id), { preserveScroll: true });
+    };
+
+    const submitHandover: FormEventHandler = (event) => {
+        event.preventDefault();
+        if (!servedNotice) return;
+        handoverForm.patch(route('tenancy-notices.handover', servedNotice.id), { preserveScroll: true });
+    };
+
+    const submitReconciliation: FormEventHandler = (event) => {
+        event.preventDefault();
+        if (!selectedTenancy) return;
+        const reconciliation = selectedTenancy.depositReconciliation;
+        const url = reconciliation
+            ? route('tenancies.deposit-reconciliation.update', reconciliation.id)
+            : route('tenancies.deposit-reconciliation.store', selectedTenancy.id);
+        reconciliationForm.transform((data) => ({
+            ...data,
+            deductions: data.deductions.filter((deduction) => deduction.description || deduction.amount),
+        }));
+        if (reconciliation) {
+            reconciliationForm.put(url, { preserveScroll: true });
+        } else {
+            reconciliationForm.post(url, { preserveScroll: true });
+        }
+    };
+
+    const submitRefund: FormEventHandler = (event) => {
+        event.preventDefault();
+        const reconciliation = selectedTenancy?.depositReconciliation;
+        if (!reconciliation) return;
+        refundForm.patch(route('tenancies.deposit-reconciliation.refund', reconciliation.id), { preserveScroll: true });
     };
 
     return (
@@ -224,6 +346,138 @@ export default function Index({ tenancies, clients, properties, canManage }: Pro
                     </form>
                 )}
 
+                {selectedTenancy && (
+                    <section className="space-y-6 border border-[#dfe5df] bg-white p-5 sm:p-7">
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <p className="eyebrow">Tenancy closeout</p>
+                                <h2 className="mt-1 font-display text-xl text-[#18342c]">{selectedTenancy.number}</h2>
+                                <p className="mt-2 text-sm text-[#64756e]">{selectedTenancy.tenantName} · {selectedTenancy.property}</p>
+                            </div>
+                            <button type="button" onClick={() => setSelectedTenancyId(null)} aria-label="Close tenancy closeout" className="grid size-9 place-items-center rounded-lg text-[#6d7d76] hover:bg-[#f1f4ef]"><X size={18} /></button>
+                        </div>
+
+                        <div className="grid gap-6 lg:grid-cols-2">
+                            <div className="space-y-4">
+                                <div>
+                                    <h3 className="font-semibold text-[#29483e]">Notice and handover</h3>
+                                    <p className="mt-1 text-xs leading-5 text-[#76857e]">Record the agreed notice dates. Confirm the tenancy agreement and applicable state requirements; REMS does not prescribe a statutory notice period.</p>
+                                </div>
+                                {selectedTenancy.notices.length > 0 && (
+                                    <div className="space-y-2">
+                                        {selectedTenancy.notices.map((notice) => (
+                                            <div key={notice.id} className="rounded-lg border border-[#e7ece6] p-3 text-sm">
+                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                    <p className="font-medium capitalize text-[#29483e]">{notice.type.replaceAll('_', ' ')} notice · {notice.status}</p>
+                                                    <p className="text-xs text-[#73827d]">{notice.noticeOn} → {notice.proposedVacateOn}</p>
+                                                </div>
+                                                <p className="mt-2 text-[#64756e]">{notice.reason}</p>
+                                                {notice.handedOverOn && <p className="mt-2 text-xs text-[#64756e]">Handed over {notice.handedOverOn}{notice.handoverNotes ? ` · ${notice.handoverNotes}` : ''}</p>}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                {selectedTenancy.canManage && selectedTenancy.status === 'active' && !servedNotice && (
+                                    <form onSubmit={submitNotice} className="space-y-3 rounded-lg bg-[#f8faf6] p-4">
+                                        <p className="text-sm font-medium text-[#29483e]">Record a notice to end the tenancy</p>
+                                        <div className="grid gap-3 sm:grid-cols-3">
+                                            <Field label="Notice from" id="notice-type">
+                                                <select id="notice-type" required value={noticeForm.data.notice_type} onChange={(event) => noticeForm.setData('notice_type', event.target.value)} className="field-input">
+                                                    <option value="tenant">Tenant</option><option value="landlord">Landlord</option><option value="mutual_agreement">Mutual agreement</option>
+                                                </select>
+                                            </Field>
+                                            <InputField label="Notice date" id="notice-date" type="date" value={noticeForm.data.notice_on} error={noticeForm.errors.notice_on} onChange={(value) => noticeForm.setData('notice_on', value)} />
+                                            <InputField label="Proposed vacate date" id="notice-vacate" type="date" value={noticeForm.data.proposed_vacate_on} error={noticeForm.errors.proposed_vacate_on} onChange={(value) => noticeForm.setData('proposed_vacate_on', value)} />
+                                        </div>
+                                        <div><label htmlFor="notice-reason" className="field-label">Reason</label><textarea id="notice-reason" required maxLength={5000} value={noticeForm.data.reason} onChange={(event) => noticeForm.setData('reason', event.target.value)} className="field-input min-h-20" /><InputError message={noticeForm.errors.reason} className="mt-2" /></div>
+                                        <InputError message={noticeForm.errors.notice_type} />
+                                        <button type="submit" disabled={noticeForm.processing} className="inline-flex h-9 items-center rounded-lg bg-[#17352d] px-3 text-xs font-semibold text-white disabled:opacity-50">{noticeForm.processing ? 'Saving…' : 'Record notice'}</button>
+                                    </form>
+                                )}
+                                {selectedTenancy.canManage && servedNotice && (
+                                    <div className="space-y-3 rounded-lg bg-[#f8faf6] p-4">
+                                        <div className="flex flex-wrap items-center justify-between gap-3">
+                                            <p className="text-sm font-medium text-[#29483e]">Complete property handover</p>
+                                            <button type="button" onClick={() => router.patch(route('tenancy-notices.withdraw', servedNotice.id), {}, { preserveScroll: true })} className="text-xs font-semibold text-[#8a493b] hover:underline">Withdraw notice</button>
+                                        </div>
+                                        <form onSubmit={submitHandover} className="space-y-3">
+                                            <InputField label="Actual handover date" id="handover-date" type="date" value={handoverForm.data.handed_over_on} error={handoverForm.errors.handed_over_on} onChange={(value) => handoverForm.setData('handed_over_on', value)} />
+                                            <div><label htmlFor="handover-notes" className="field-label">Inspection and key-return notes</label><textarea id="handover-notes" maxLength={5000} value={handoverForm.data.handover_notes} onChange={(event) => handoverForm.setData('handover_notes', event.target.value)} className="field-input min-h-20" /><InputError message={handoverForm.errors.handover_notes} className="mt-2" /></div>
+                                            <p className="text-xs leading-5 text-[#76857e]">{servedNotice.type === 'mutual_agreement' ? 'A mutually agreed early handover can be recorded.' : `Handover is available on or after ${servedNotice.proposedVacateOn}.`}</p>
+                                            <button type="submit" disabled={handoverForm.processing || (servedNotice.type !== 'mutual_agreement' && servedNotice.proposedVacateOn > localDateString())} className="inline-flex h-9 items-center rounded-lg bg-[#17352d] px-3 text-xs font-semibold text-white disabled:opacity-50">{handoverForm.processing ? 'Saving…' : 'Complete handover'}</button>
+                                        </form>
+                                        <InputError message={handoverForm.errors.handed_over_on} />
+                                    </div>
+                                )}
+                                {selectedTenancy.status === 'completed' && !completedNotice && <p className="rounded-lg bg-[#f8faf6] p-4 text-sm text-[#64756e]">{selectedTenancy.renewedByNumber ? `This tenancy was superseded by ${selectedTenancy.renewedByNumber}; its security deposit is carried forward and will be reconciled at the renewed tenancy’s handover.` : 'This tenancy was completed without a recorded handover notice. Deposit reconciliation is available after handover has been recorded.'}</p>}
+                            </div>
+
+                            <div className="space-y-4">
+                                <div>
+                                    <h3 className="font-semibold text-[#29483e]">Security deposit reconciliation</h3>
+                                    <p className="mt-1 text-xs leading-5 text-[#76857e]">Only approved receipts allocated to security-deposit charges count as funds held. Record each deduction with a reason and evidence reference where available.</p>
+                                </div>
+                                <p className="rounded-lg bg-[#f8faf6] px-4 py-3 text-sm text-[#29483e]">Deposit held (approved receipts{Number(selectedTenancy.depositCarriedForwardAmount) > 0 ? ` plus ${formatMoney(selectedTenancy.depositCarriedForwardAmount, selectedTenancy.currency)} carried forward` : ''}): <strong>{formatMoney(selectedTenancy.depositReceivedAmount, selectedTenancy.currency)}</strong></p>
+                                {selectedTenancy.status === 'completed' && completedNotice && selectedTenancy.canManage && (
+                                    <>
+                                        {selectedTenancy.depositReconciliation?.status === 'draft' || !selectedTenancy.depositReconciliation ? (
+                                            <form onSubmit={submitReconciliation} className="space-y-4">
+                                                <div className="space-y-3">
+                                                    {reconciliationForm.data.deductions.map((deduction, index) => (
+                                                        <div key={index} className="grid gap-3 rounded-lg border border-[#e7ece6] p-3 sm:grid-cols-2">
+                                                            <Field label="Deduction type" id={`deduction-category-${index}`}>
+                                                                <select id={`deduction-category-${index}`} required value={deduction.category} onChange={(event) => reconciliationForm.setData('deductions', reconciliationForm.data.deductions.map((item, itemIndex) => itemIndex === index ? { ...item, category: event.target.value, rent_schedule_id: event.target.value === 'unpaid_rent' ? item.rent_schedule_id : '' } : item))} className="field-input">
+                                                                    <option value="unpaid_rent">Unpaid rent</option><option value="damage">Damage</option><option value="utilities">Utilities</option><option value="other">Other</option>
+                                                                </select>
+                                                            </Field>
+                                                            {deduction.category === 'unpaid_rent' && <Field label="Rent charge to settle" id={`deduction-rent-schedule-${index}`}>
+                                                                <select id={`deduction-rent-schedule-${index}`} required value={deduction.rent_schedule_id ?? ''} onChange={(event) => reconciliationForm.setData('deductions', reconciliationForm.data.deductions.map((item, itemIndex) => itemIndex === index ? { ...item, rent_schedule_id: event.target.value } : item))} className="field-input">
+                                                                    <option value="">Select an outstanding rent charge</option>
+                                                                    {selectedTenancy.unpaidRentSchedules.map((schedule) => <option key={schedule.id} value={schedule.id}>{schedule.period} · balance {formatMoney(schedule.amountDue, selectedTenancy.currency)}</option>)}
+                                                                </select>
+                                                                <InputError message={reconciliationForm.errors[`deductions.${index}.rent_schedule_id`]} className="mt-2" />
+                                                            </Field>}
+                                                            <div><label htmlFor={`deduction-amount-${index}`} className="field-label">Amount</label><input id={`deduction-amount-${index}`} required type="number" min="0.01" step="0.01" value={deduction.amount} onChange={(event) => reconciliationForm.setData('deductions', reconciliationForm.data.deductions.map((item, itemIndex) => itemIndex === index ? { ...item, amount: event.target.value } : item))} className="field-input" /><InputError message={reconciliationForm.errors[`deductions.${index}.amount`]} className="mt-2" /></div>
+                                                            <div><label htmlFor={`deduction-description-${index}`} className="field-label">Reason</label><input id={`deduction-description-${index}`} required maxLength={180} value={deduction.description} onChange={(event) => reconciliationForm.setData('deductions', reconciliationForm.data.deductions.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item))} className="field-input" /><InputError message={reconciliationForm.errors[`deductions.${index}.description`]} className="mt-2" /></div>
+                                                            <div className="flex items-end gap-2"><div className="flex-1"><label htmlFor={`deduction-evidence-${index}`} className="field-label">Evidence reference (optional)</label><input id={`deduction-evidence-${index}`} maxLength={200} value={deduction.evidence_reference ?? ''} onChange={(event) => reconciliationForm.setData('deductions', reconciliationForm.data.deductions.map((item, itemIndex) => itemIndex === index ? { ...item, evidence_reference: event.target.value } : item))} className="field-input" /></div><button type="button" onClick={() => reconciliationForm.setData('deductions', reconciliationForm.data.deductions.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove deduction ${index + 1}`} className="grid size-10 place-items-center rounded-lg text-[#8a493b] hover:bg-[#f9eeeb]"><X size={16} /></button></div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <InputError message={reconciliationForm.errors.deductions} />
+                                                <div className="flex flex-wrap gap-2">
+                                                    <button type="button" onClick={() => reconciliationForm.setData('deductions', [...reconciliationForm.data.deductions, emptyDeduction()])} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#d9e1d9] px-3 text-xs font-semibold text-[#315447] hover:bg-[#f1f4ef]"><Plus size={14} /> Add deduction</button>
+                                                    <button type="submit" disabled={reconciliationForm.processing} className="inline-flex h-9 items-center rounded-lg bg-[#17352d] px-3 text-xs font-semibold text-white disabled:opacity-50">{reconciliationForm.processing ? 'Saving…' : selectedTenancy.depositReconciliation ? 'Update draft' : 'Save draft'}</button>
+                                                    {selectedTenancy.depositReconciliation && <button type="button" disabled={reconciliationForm.processing || hasUnsavedReconciliation} onClick={() => router.patch(route('tenancies.deposit-reconciliation.finalize', selectedTenancy.depositReconciliation?.id), {}, { preserveScroll: true })} className="inline-flex h-9 items-center rounded-lg border border-[#d9e1d9] px-3 text-xs font-semibold text-[#315447] hover:bg-[#f1f4ef] disabled:opacity-50">Finalize reconciliation</button>}
+                                                </div>
+                                            </form>
+                                        ) : (
+                                            <div className="space-y-3 rounded-lg border border-[#e7ece6] p-4">
+                                                <p className="text-sm font-medium capitalize text-[#29483e]">Reconciliation {selectedTenancy.depositReconciliation.status}</p>
+                                                <div className="grid gap-2 text-sm text-[#64756e] sm:grid-cols-3">
+                                                    <p>Held: {formatMoney(selectedTenancy.depositReconciliation.depositReceivedAmount, selectedTenancy.currency)}</p>
+                                                    <p>Deductions: {formatMoney(selectedTenancy.depositReconciliation.deductionTotal, selectedTenancy.currency)}</p>
+                                                    <p>Refund due: {formatMoney(selectedTenancy.depositReconciliation.refundDueAmount, selectedTenancy.currency)}</p>
+                                                </div>
+                                                {selectedTenancy.depositReconciliation.deductions.map((deduction, index) => <p key={`${deduction.category}-${index}`} className="text-xs text-[#64756e]">{deduction.category.replaceAll('_', ' ')} · {deduction.description} · {formatMoney(deduction.amount, selectedTenancy.currency)}{deduction.evidence_reference ? ` · Ref: ${deduction.evidence_reference}` : ''}</p>)}
+                                                {selectedTenancy.depositReconciliation.status === 'finalized' && Number(selectedTenancy.depositReconciliation.refundDueAmount) > 0 && (
+                                                    <form onSubmit={submitRefund} className="space-y-3 border-t border-[#e7ece6] pt-3">
+                                                        <p className="text-sm font-medium text-[#29483e]">Record completed refund</p>
+                                                        <div><label htmlFor="refund-reference" className="field-label">Payment reference</label><input id="refund-reference" required maxLength={120} value={refundForm.data.refund_reference} onChange={(event) => refundForm.setData('refund_reference', event.target.value)} className="field-input" /><InputError message={refundForm.errors.refund_reference} className="mt-2" /></div>
+                                                        <div><label htmlFor="refund-notes" className="field-label">Notes (optional)</label><textarea id="refund-notes" maxLength={2000} value={refundForm.data.refund_notes} onChange={(event) => refundForm.setData('refund_notes', event.target.value)} className="field-input min-h-16" /></div>
+                                                        <button type="submit" disabled={refundForm.processing} className="inline-flex h-9 items-center rounded-lg bg-[#17352d] px-3 text-xs font-semibold text-white disabled:opacity-50">{refundForm.processing ? 'Saving…' : 'Record refund paid'}</button>
+                                                    </form>
+                                                )}
+                                                {selectedTenancy.depositReconciliation.status === 'finalized' && Number(selectedTenancy.depositReconciliation.refundDueAmount) === 0 && <p className="text-xs text-[#64756e]">No refund is due after the recorded deductions.</p>}
+                                                {selectedTenancy.depositReconciliation.status === 'refunded' && <p className="text-xs text-[#64756e]">Refund recorded{selectedTenancy.depositReconciliation.refundReference ? ` · Reference ${selectedTenancy.depositReconciliation.refundReference}` : ''}{selectedTenancy.depositReconciliation.refundedAt ? ` · ${new Date(selectedTenancy.depositReconciliation.refundedAt).toLocaleDateString()}` : ''}</p>}
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </section>
+                )}
+
                 <div className="overflow-x-auto border border-[#dfe5df] bg-white">
                     <table className="w-full min-w-[900px] text-left">
                         <thead className="bg-[#f8faf6] text-[11px] font-semibold uppercase tracking-[0.12em] text-[#77857f]"><tr><th className="px-5 py-3">Tenancy</th><th className="px-5 py-3">Tenant</th><th className="px-5 py-3">Property</th><th className="px-5 py-3">Term</th><th className="px-5 py-3 text-right">Rent</th><th className="px-5 py-3">Status</th><th className="px-5 py-3" /></tr></thead>
@@ -235,7 +489,7 @@ export default function Index({ tenancies, clients, properties, canManage }: Pro
                                 <td className="px-5 py-4 text-sm text-[#4c6259]">{tenancy.startsOn} – {tenancy.endsOn ?? 'Open ended'}</td>
                                 <td className="px-5 py-4 text-right text-sm font-medium text-[#29483e]">{formatMoney(tenancy.rentAmount, tenancy.currency)}{tenancy.additionalCharges.length > 0 && <p className="mt-1 text-xs font-normal text-[#7b8983]" title={tenancy.additionalCharges.map((charge) => charge.name).join(', ')}>Charges {formatMoney(tenancy.additionalChargesTotal, tenancy.currency)} · {tenancy.additionalCharges.map((charge) => charge.name).join(', ')}</p>}</td>
                                 <td className="px-5 py-4"><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${tenancy.status === 'active' ? 'bg-[#edf4eb] text-[#315447]' : tenancy.status === 'completed' ? 'bg-[#e9edf0] text-[#465860]' : 'bg-[#f8f2dc] text-[#756128]'}`}>{tenancy.status.replaceAll('_', ' ')}</span></td>
-                                <td className="px-5 py-4 text-right"><div className="flex justify-end gap-2">{canManage && tenancy.canManage && tenancy.status === 'draft' && <button type="button" onClick={() => router.patch(route('tenancies.activate', tenancy.id), {}, { preserveScroll: true })} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#17352d] px-3 text-xs font-semibold text-white hover:bg-[#244b40]"><Check size={14} /> Activate</button>}{canManage && tenancy.canManage && tenancy.renewal && <button type="button" onClick={() => openRenewal(tenancy)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#d9e1d9] px-3 text-xs font-semibold text-[#315447] hover:bg-[#f1f4ef]"><CalendarDays size={14} /> Draft renewal</button>}</div></td>
+                                <td className="px-5 py-4 text-right"><div className="flex justify-end gap-2">{canManage && tenancy.canManage && tenancy.status === 'draft' && <button type="button" onClick={() => router.patch(route('tenancies.activate', tenancy.id), {}, { preserveScroll: true })} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#17352d] px-3 text-xs font-semibold text-white hover:bg-[#244b40]"><Check size={14} /> Activate</button>}{canManage && tenancy.canManage && tenancy.renewal && <button type="button" onClick={() => openRenewal(tenancy)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#d9e1d9] px-3 text-xs font-semibold text-[#315447] hover:bg-[#f1f4ef]"><CalendarDays size={14} /> Draft renewal</button>}{canManage && tenancy.canManage && ['active', 'completed'].includes(tenancy.status) && <button type="button" onClick={() => selectedTenancyId === tenancy.id ? setSelectedTenancyId(null) : openCloseout(tenancy)} className="inline-flex h-9 items-center rounded-lg border border-[#d9e1d9] px-3 text-xs font-semibold text-[#315447] hover:bg-[#f1f4ef]">{selectedTenancyId === tenancy.id ? 'Closeout open' : 'Manage closeout'}</button>}</div></td>
                             </tr>)}
                             {tenancies.length === 0 && <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-[#718078]">No tenancies have been created yet.</td></tr>}
                         </tbody>

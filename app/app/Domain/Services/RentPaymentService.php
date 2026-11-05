@@ -108,13 +108,28 @@ class RentPaymentService
             ->keyBy('id');
 
         abort_unless($schedules->count() === count($allocationCents), 404, 'One or more rent charges do not belong to this tenancy.');
+        abort_unless(
+            ! $schedules->contains(fn (RentSchedule $schedule): bool => $schedule->status === 'written_off'),
+            409,
+            'A written-off rent charge cannot receive a payment.',
+        );
+
+        if ($tenancy->depositReconciliation()->whereIn('status', ['finalized', 'refunded'])->exists()) {
+            abort_unless(
+                ! $schedules->contains(fn (RentSchedule $schedule): bool => $schedule->category === 'security_deposit'),
+                409,
+                'Security-deposit payments cannot be approved after the reconciliation is finalized.',
+            );
+        }
 
         foreach ($allocationCents as $scheduleId => $amountCents) {
             $schedule = $schedules->get($scheduleId);
             $alreadyAllocatedCents = $this->reservedAllocationCents($scheduleId, $payment->id);
+            $netAmountDueCents = Money::toMinorUnits($schedule->amount_due)
+                - $schedule->reconciledDepositDeductionCents();
 
             abort_unless(
-                $alreadyAllocatedCents + $amountCents <= Money::toMinorUnits($schedule->amount_due),
+                $alreadyAllocatedCents + $amountCents <= $netAmountDueCents,
                 409,
                 'Approval would exceed a rent charge balance.',
             );
@@ -133,10 +148,12 @@ class RentPaymentService
 
             $schedule = $schedules->get($scheduleId);
             $paidCents = $this->approvedAllocationCents($scheduleId) + $amountCents;
+            $netAmountDueCents = Money::toMinorUnits($schedule->amount_due)
+                - $schedule->reconciledDepositDeductionCents();
             $schedule->update([
-                'status' => $paidCents === Money::toMinorUnits($schedule->amount_due)
+                'status' => $paidCents >= $netAmountDueCents
                     ? 'paid'
-                    : 'partially_paid',
+                    : ($paidCents > 0 ? 'partially_paid' : 'unpaid'),
             ]);
         }
     }

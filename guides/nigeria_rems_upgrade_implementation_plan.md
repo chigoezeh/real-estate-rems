@@ -20,11 +20,11 @@ The foundation and first usable sales, rental, rent-payment, and maintenance wor
 
 Earlier increments added the normalized geography/property/title schema, exact minor-unit money handling, rental listing and tenancy draft/activation, rent schedules and proof review, maintenance work orders, permission scoping, and their feature tests. Parent/child organization access remains supported.
 
-The latest tenancy increment adds auditable renewal drafts as separate agreements linked to their predecessor. Renewal terms preserve the original schedule history, must begin the day after the current fixed term, and supersede the previous tenancy only when activated; outstanding charges on completed terms remain visible and collectible.
+The latest tenancy increments add auditable renewal drafts and an end-of-tenancy closeout. Renewals remain separate agreements, preserve the original schedule history, begin the day after the current fixed term, and supersede the predecessor only when activated. Approved, fully collected security deposits carry forward to the renewal, with only any top-up scheduled; unsettled or pending deposit receipts block activation. Notices capture the notice date, proposed vacate date, reason, and actual handover without overwriting the contractual term dates. Notice periods are not hard-coded because the agreement and applicable state rules must be verified by the company. Deposit reconciliation counts approved receipts and carried-forward balances, itemizes deductions, blocks over-deduction and unresolved pending receipts, allows an evidenced unpaid-rent deduction to settle a selected rent charge, writes off uncollected deposit balances, and records the refund reference and completion. Finalized deductions update the affected rent ledger balances and prevent further collection of the written-off portion.
 
-**Still to implement:** seed or curate a reusable city/locality reference catalog beyond user-created entries; complete tenancy notices, terminations, deposit accounting, arrears workflows, and tenant self-service; add richer maintenance evidence/vendor controls and policy-based approval thresholds; add sales allocation policy configuration, commissions, notifications, and reporting; and consolidate migration history. Migrations remain additive; the local MySQL database was initialized and the prior SQLite file remains untouched. The latest Composer audit is clear. Rent accounting surfaces overdue balances using approved allocations only, while showing pending receipts separately. Latest validation: 89 Laravel tests (737 assertions), targeted Pint checks for changed PHP files, and the production TypeScript/Vite build pass. PHPUnit is forced to use isolated in-memory SQLite so test runs do not mutate the MySQL app database. A repository-wide Pint check still reports pre-existing formatting issues in unrelated files. This is a staged foundation, not a complete release.
+**Still to implement:** seed or curate a reusable city/locality reference catalog beyond user-created entries; configurable late-payment/arrears policies, tenant self-service, and notice/notification delivery; richer maintenance evidence/vendor controls and policy-based approval thresholds; sales allocation policy configuration, commissions, notifications, and reporting; and migration-history consolidation. Migrations remain additive; the local MySQL database was initialized and the prior SQLite file remains untouched. Rent accounting surfaces overdue balances using approved allocations only, while showing pending receipts separately. PHPUnit is forced to use isolated in-memory SQLite so test runs do not mutate the MySQL app database. A repository-wide Pint check still reports pre-existing formatting issues in unrelated files. This is a staged foundation, not a complete release.
 
-**Next implementation focus:** complete Phase 4 with tenancy notices, terminations, and deposit reconciliation, then extend arrears with company-configurable late-payment policies and notifications before adding configurable sales allocation policy and the remaining cross-cutting features.
+**Next implementation focus:** extend rent arrears with company-configurable late-payment policies and notification tracking, then continue with tenant self-service, maintenance vendor/evidence controls, sales allocation policy, and remaining cross-cutting features. Latest validation: 91 Laravel tests (805 assertions), targeted Pint, and the React/TypeScript production build pass; the new migrations are applied to the configured local MySQL database.
 
 ## 1. Product decisions
 
@@ -174,10 +174,12 @@ If example/local data is needed, provide factories and seeders instead of produc
 
 ### Phase 4 — Rental, tenancy, and rent accounting
 
-- Add tenant onboarding, tenancy terms, rent schedules/charges, receipts, payment allocation, arrears, renewals, notices, terminations, and deposit accounting.
+- Implement tenant onboarding, tenancy terms, rent schedules/charges, receipts, payment allocation, arrears visibility, renewal, notice, handover/termination, and deposit reconciliation/refunds.
+- Carry approved, fully collected security deposits forward at renewal and schedule only required top-ups; do not activate renewals with unsettled or pending deposit receipts.
+- Record actual handover separately from contractual end dates; avoid assuming a single statutory notice period across jurisdictions.
 - Enforce overlap rules and organization-specific settings.
 
-**Gate:** a tenancy can be created, billed, paid partially/in full, renewed or ended, with reconciled balances and no unauthorized overlapping tenancy.
+**Gate:** covered by tenancy lifecycle and rent-ledger feature tests; configurable late-payment policies, notifications, and tenant self-service remain follow-on work.
 
 ### Phase 5 — Maintenance, vendors, commissions, and notifications
 

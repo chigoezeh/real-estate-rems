@@ -47,29 +47,80 @@ class TenancyController extends Controller
             ->map(fn (OrganizationChargeType $charge): array => $this->policyForClient($charge))
             ->values()
             ->all();
+        $tenancies = Tenancy::query()
+            ->with([
+                'organization:id,currency',
+                'tenant:id,full_name,phone',
+                'propertyUnit:id,project_id,phase,block,code,unit_type,area_sqm',
+                'propertyUnit.project:id,name',
+                'renewalOf:id,tenancy_number',
+                'renewals:id,tenancy_number,renewal_of_tenancy_id,status',
+                'notices',
+                'depositReconciliation.deductions',
+            ])
+            ->withCount(['renewals as draft_renewals_count' => fn ($query) => $query->where('status', 'draft')])
+            ->whereIn('organization_id', $organizationIds)
+            ->latest()
+            ->limit(200)
+            ->get();
+        $depositAmountsByTenancy = DB::table('rent_schedules')
+            ->join('rent_payment_allocations', 'rent_payment_allocations.rent_schedule_id', '=', 'rent_schedules.id')
+            ->join('rent_payments', 'rent_payments.id', '=', 'rent_payment_allocations.rent_payment_id')
+            ->where('rent_schedules.category', 'security_deposit')
+            ->where('rent_payments.status', 'approved')
+            ->whereIn('rent_schedules.tenancy_id', $tenancies->pluck('id'))
+            ->get(['rent_schedules.tenancy_id', 'rent_payment_allocations.amount'])
+            ->groupBy('tenancy_id')
+            ->map(fn ($allocations): int => $allocations->sum(
+                fn ($allocation): int => Money::toMinorUnits((string) $allocation->amount),
+            ));
+        $rentSchedulesByTenancy = RentSchedule::query()
+            ->with(['payments', 'depositDeductions.reconciliation'])
+            ->whereIn('tenancy_id', $tenancies->pluck('id'))
+            ->where('category', 'rent')
+            ->get()
+            ->groupBy('tenancy_id');
 
         return Inertia::render('Tenancies/Index', [
-            'tenancies' => Tenancy::query()
-                ->with([
-                    'organization:id,currency',
-                    'tenant:id,full_name,phone',
-                    'propertyUnit:id,project_id,phase,block,code,unit_type,area_sqm',
-                    'propertyUnit.project:id,name',
-                    'renewalOf:id,tenancy_number',
-                ])
-                ->withCount(['renewals as draft_renewals_count' => fn ($query) => $query->where('status', 'draft')])
-                ->whereIn('organization_id', $organizationIds)
-                ->latest()
-                ->limit(200)
-                ->get()
-                ->map(function (Tenancy $tenancy) use ($manageableOrganizationIds, $chargePoliciesForOrganization): array {
+            'tenancies' => $tenancies
+                ->map(function (Tenancy $tenancy) use ($manageableOrganizationIds, $chargePoliciesForOrganization, $depositAmountsByTenancy, $rentSchedulesByTenancy): array {
                     $canManageTenancy = in_array($tenancy->organization_id, $manageableOrganizationIds, true);
                     $renewalStartsOn = $tenancy->ends_on?->copy()->addDay();
                     $canRenew = $canManageTenancy
                         && $tenancy->status === 'active'
                         && $renewalStartsOn !== null
                         && $tenancy->ends_on->gte(today())
-                        && $tenancy->draft_renewals_count === 0;
+                        && $tenancy->draft_renewals_count === 0
+                        && ! $tenancy->notices->contains('status', 'served');
+                    $handoverDate = $tenancy->notices->firstWhere('status', 'completed')?->handed_over_on;
+                    $unpaidRentSchedules = $handoverDate === null ? [] : $rentSchedulesByTenancy
+                        ->get($tenancy->id, collect())
+                        ->filter(fn (RentSchedule $schedule): bool => $schedule->due_on->lte($handoverDate))
+                        ->map(function (RentSchedule $schedule): array {
+                            $paidCents = $schedule->payments
+                                ->where('status', 'approved')
+                                ->sum(fn (RentPayment $payment): int => Money::toMinorUnits($payment->pivot->amount));
+                            $pendingCents = $schedule->payments
+                                ->where('status', 'pending')
+                                ->sum(fn (RentPayment $payment): int => Money::toMinorUnits($payment->pivot->amount));
+                            $deductedCents = $schedule->depositDeductions
+                                ->filter(fn ($deduction): bool => in_array($deduction->reconciliation->status, ['finalized', 'refunded'], true))
+                                ->sum(fn ($deduction): int => Money::toMinorUnits($deduction->amount));
+                            $balanceCents = max(
+                                0,
+                                Money::toMinorUnits($schedule->amount_due) - $paidCents - $pendingCents - $deductedCents,
+                            );
+
+                            return [
+                                'id' => $schedule->id,
+                                'period' => $schedule->period_starts_on->toDateString().' – '.$schedule->period_ends_on->toDateString(),
+                                'amountDue' => Money::fromMinorUnits($balanceCents),
+                                'pendingAmount' => Money::fromMinorUnits($pendingCents),
+                            ];
+                        })
+                        ->filter(fn (array $schedule): bool => Money::toMinorUnits($schedule['amountDue']) > 0 && Money::toMinorUnits($schedule['pendingAmount']) === 0)
+                        ->values()
+                        ->all();
 
                     return [
                         'id' => $tenancy->id,
@@ -86,8 +137,47 @@ class TenancyController extends Controller
                         'serviceCharge' => $tenancy->service_charge,
                         'additionalChargesTotal' => $this->tenancyChargeTotal($tenancy),
                         'additionalCharges' => $tenancy->terms_snapshot['charges'] ?? [],
+                        'unpaidRentSchedules' => $unpaidRentSchedules,
+                        'depositReceivedAmount' => Money::fromMinorUnits(
+                            ($depositAmountsByTenancy->get($tenancy->id) ?? 0)
+                                + Money::toMinorUnits($tenancy->security_deposit_carried_forward),
+                        ),
+                        'depositCarriedForwardAmount' => $tenancy->security_deposit_carried_forward,
+                        'notices' => $tenancy->notices
+                            ->sortByDesc('notice_on')
+                            ->map(fn ($notice): array => [
+                                'id' => $notice->id,
+                                'type' => $notice->notice_type,
+                                'noticeOn' => $notice->notice_on->toDateString(),
+                                'proposedVacateOn' => $notice->proposed_vacate_on->toDateString(),
+                                'reason' => $notice->reason,
+                                'status' => $notice->status,
+                                'handedOverOn' => $notice->handed_over_on?->toDateString(),
+                                'handoverNotes' => $notice->handover_notes,
+                            ])
+                            ->values(),
+                        'depositReconciliation' => $tenancy->depositReconciliation === null ? null : [
+                            'id' => $tenancy->depositReconciliation->id,
+                            'status' => $tenancy->depositReconciliation->status,
+                            'depositReceivedAmount' => $tenancy->depositReconciliation->deposit_received_amount,
+                            'deductionTotal' => $tenancy->depositReconciliation->deduction_total,
+                            'refundDueAmount' => $tenancy->depositReconciliation->refund_due_amount,
+                            'refundedAt' => $tenancy->depositReconciliation->refunded_at?->toIso8601String(),
+                            'refundReference' => $tenancy->depositReconciliation->refund_reference,
+                            'refundNotes' => $tenancy->depositReconciliation->refund_notes,
+                            'deductions' => $tenancy->depositReconciliation->deductions
+                                ->map(fn ($deduction): array => [
+                                    'category' => $deduction->category,
+                                    'description' => $deduction->description,
+                                    'amount' => $deduction->amount,
+                                    'evidence_reference' => $deduction->evidence_reference,
+                                    'rent_schedule_id' => $deduction->rent_schedule_id,
+                                ])
+                                ->values(),
+                        ],
                         'currency' => $tenancy->organization->currency,
                         'renewalOfNumber' => $tenancy->renewalOf?->tenancy_number,
+                        'renewedByNumber' => $tenancy->renewals->firstWhere('status', 'active')?->tenancy_number,
                         'renewal' => $canRenew ? [
                             'clientId' => $tenancy->tenant_client_id,
                             'startsOn' => $renewalStartsOn->toDateString(),
@@ -177,6 +267,11 @@ class TenancyController extends Controller
                 $validated['starts_on'],
             );
             abort_unless($renewalOfTenancy->ends_on->gte(today()), 422, 'A renewal draft must be created before the current term ends.');
+            abort_unless(
+                ! $renewalOfTenancy->notices()->where('status', 'served')->exists(),
+                409,
+                'A tenancy with an open termination notice cannot be renewed.',
+            );
         }
         abort_unless($client->kyc_status === 'verified', 422, 'Verified client KYC is required before creating a tenancy.');
         abort_unless(
@@ -199,6 +294,11 @@ class TenancyController extends Controller
                     $validated['starts_on'],
                 );
                 abort_unless($lockedRenewal->ends_on->gte(today()), 409, 'The current tenancy term has ended; create a new tenancy instead.');
+                abort_unless(
+                    ! $lockedRenewal->notices()->where('status', 'served')->exists(),
+                    409,
+                    'A tenancy with an open termination notice cannot be renewed.',
+                );
                 abort_unless(! $lockedRenewal->renewals()->where('status', 'draft')->exists(), 409, 'A renewal draft already exists for this tenancy.');
                 abort_unless(
                     $lockedProperty->status === 'available' && $lockedProperty->rental_status === 'occupied',
@@ -308,12 +408,12 @@ class TenancyController extends Controller
         abort_unless(in_array($tenancy->organization_id, Organization::accessibleIdsFor($user, 'tenancies.manage'), true), 404);
 
         DB::transaction(function () use ($request, $user, $tenancy): void {
+            $renewalSource = $tenancy->renewal_of_tenancy_id
+                ? Tenancy::query()->lockForUpdate()->findOrFail($tenancy->renewal_of_tenancy_id)
+                : null;
             $lockedTenancy = Tenancy::query()->lockForUpdate()->findOrFail($tenancy->id);
             abort_unless($lockedTenancy->status === 'draft', 409, 'Only draft tenancies can be activated.');
-
-            $renewalSource = $lockedTenancy->renewal_of_tenancy_id
-                ? Tenancy::query()->lockForUpdate()->findOrFail($lockedTenancy->renewal_of_tenancy_id)
-                : null;
+            abort_unless($lockedTenancy->renewal_of_tenancy_id === $renewalSource?->id, 409, 'The renewal source changed before activation.');
             if ($renewalSource !== null) {
                 $this->assertRenewalSource(
                     $renewalSource,
@@ -327,6 +427,11 @@ class TenancyController extends Controller
                     409,
                     'A renewal can only be activated during its new tenancy term.',
                 );
+                abort_unless(
+                    ! $renewalSource->notices()->where('status', 'served')->exists(),
+                    409,
+                    'A tenancy with an open termination notice cannot be renewed.',
+                );
             }
 
             $property = PropertyUnit::query()->lockForUpdate()->findOrFail($lockedTenancy->property_unit_id);
@@ -336,13 +441,20 @@ class TenancyController extends Controller
                 abort_unless($property->status === 'available' && $property->rental_status === 'available', 409, 'This property is no longer available for rent.');
             }
             $this->ensureNoActiveOverlap($lockedTenancy);
-            $this->createRentSchedules($lockedTenancy);
+            $depositCarriedForwardCents = $renewalSource === null
+                ? 0
+                : $this->depositCarriedForwardCents($renewalSource);
+            $lockedTenancy->update([
+                'security_deposit_carried_forward' => Money::fromMinorUnits($depositCarriedForwardCents),
+            ]);
+            $this->createRentSchedules($lockedTenancy, $depositCarriedForwardCents);
 
             $lockedTenancy->update(['status' => 'active']);
             if ($renewalSource !== null) {
                 $renewalSource->update(['status' => 'completed']);
                 $this->audit($request, $user, $renewalSource, 'tenancy.renewed', [
                     'renewed_by_tenancy_id' => $lockedTenancy->id,
+                    'deposit_carried_forward' => Money::fromMinorUnits($depositCarriedForwardCents),
                 ]);
             } else {
                 $property->update(['rental_status' => 'occupied']);
@@ -394,7 +506,52 @@ class TenancyController extends Controller
         );
     }
 
-    private function createRentSchedules(Tenancy $tenancy): void
+    private function depositCarriedForwardCents(Tenancy $source): int
+    {
+        $schedules = RentSchedule::query()
+            ->where('tenancy_id', $source->id)
+            ->where('category', 'security_deposit')
+            ->lockForUpdate()
+            ->get(['id', 'amount_due']);
+        $scheduleIds = $schedules->pluck('id');
+        if ($scheduleIds->isEmpty()) {
+            return Money::toMinorUnits($source->security_deposit_carried_forward);
+        }
+
+        $hasPendingPayment = DB::table('rent_payment_allocations')
+            ->join('rent_payments', 'rent_payments.id', '=', 'rent_payment_allocations.rent_payment_id')
+            ->whereIn('rent_payment_allocations.rent_schedule_id', $scheduleIds)
+            ->where('rent_payments.status', 'pending')
+            ->exists();
+        abort_unless(! $hasPendingPayment, 409, 'Review pending security-deposit payments before activating this renewal.');
+
+        $paidBySchedule = [];
+        $allocations = DB::table('rent_payment_allocations')
+            ->join('rent_payments', 'rent_payments.id', '=', 'rent_payment_allocations.rent_payment_id')
+            ->whereIn('rent_payment_allocations.rent_schedule_id', $scheduleIds)
+            ->where('rent_payments.status', 'approved')
+            ->get(['rent_payment_allocations.rent_schedule_id', 'rent_payment_allocations.amount']);
+        foreach ($allocations as $allocation) {
+            $scheduleId = $allocation->rent_schedule_id;
+            $paidBySchedule[$scheduleId] = ($paidBySchedule[$scheduleId] ?? 0)
+                + Money::toMinorUnits((string) $allocation->amount);
+        }
+
+        $totalCents = 0;
+        foreach ($schedules as $schedule) {
+            $paidCents = $paidBySchedule[$schedule->id] ?? 0;
+            abort_unless(
+                $paidCents >= Money::toMinorUnits($schedule->amount_due),
+                409,
+                'Settle all security-deposit charges before activating this renewal.',
+            );
+            $totalCents += $paidCents;
+        }
+
+        return $totalCents + Money::toMinorUnits($source->security_deposit_carried_forward);
+    }
+
+    private function createRentSchedules(Tenancy $tenancy, int $depositCreditCents = 0): void
     {
         $months = self::FREQUENCIES[$tenancy->rent_frequency];
         $termStart = Carbon::parse($tenancy->starts_on);
@@ -437,28 +594,46 @@ class TenancyController extends Controller
             }
 
             if ($chargeSnapshots === [] && $periodCount === 1 && Money::toMinorUnits($tenancy->security_deposit) > 0) {
-                RentSchedule::create([
-                    'tenancy_id' => $tenancy->id,
-                    ...$period,
-                    'category' => 'security_deposit',
-                    'amount_due' => $tenancy->security_deposit,
-                    'status' => 'unpaid',
-                ]);
+                $depositAmountCents = max(0, Money::toMinorUnits($tenancy->security_deposit) - $depositCreditCents);
+                if ($depositAmountCents > 0) {
+                    RentSchedule::create([
+                        'tenancy_id' => $tenancy->id,
+                        ...$period,
+                        'category' => 'security_deposit',
+                        'amount_due' => Money::fromMinorUnits($depositAmountCents),
+                        'status' => 'unpaid',
+                    ]);
+                }
+                $depositCreditCents = max(0, $depositCreditCents - Money::toMinorUnits($tenancy->security_deposit));
             }
 
             if ($periodCount === 1) {
                 foreach ($chargeSnapshots as $charge) {
-                    if (($charge['schedule_behavior'] ?? 'first_period_only') !== 'repeat_each_period'
-                        && Money::toMinorUnits($charge['calculated_amount']) > 0) {
-                        $this->createPolicyRentSchedule($tenancy, $charge, $period, $charge['calculated_amount']);
+                    if (($charge['schedule_behavior'] ?? 'first_period_only') !== 'repeat_each_period') {
+                        $amountCents = Money::toMinorUnits($charge['calculated_amount']);
+                        if ($charge['category'] === 'security_deposit') {
+                            $creditCents = min($depositCreditCents, $amountCents);
+                            $amountCents -= $creditCents;
+                            $depositCreditCents -= $creditCents;
+                        }
+                        if ($amountCents > 0) {
+                            $this->createPolicyRentSchedule($tenancy, $charge, $period, Money::fromMinorUnits($amountCents));
+                        }
                     }
                 }
             }
 
             foreach ($chargeSnapshots as $charge) {
-                if (($charge['schedule_behavior'] ?? '') === 'repeat_each_period'
-                    && Money::toMinorUnits($charge['calculated_amount']) > 0) {
-                    $this->createPolicyRentSchedule($tenancy, $charge, $period, $charge['calculated_amount']);
+                if (($charge['schedule_behavior'] ?? '') === 'repeat_each_period') {
+                    $amountCents = Money::toMinorUnits($charge['calculated_amount']);
+                    if ($charge['category'] === 'security_deposit') {
+                        $creditCents = min($depositCreditCents, $amountCents);
+                        $amountCents -= $creditCents;
+                        $depositCreditCents -= $creditCents;
+                    }
+                    if ($amountCents > 0) {
+                        $this->createPolicyRentSchedule($tenancy, $charge, $period, Money::fromMinorUnits($amountCents));
+                    }
                 }
             }
 
