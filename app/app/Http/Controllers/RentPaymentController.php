@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Domain\Services\LateFeeAssessmentService;
 use App\Domain\Services\RentPaymentService;
 use App\Models\AuditLog;
 use App\Models\Organization;
+use App\Models\RentContactLog;
 use App\Models\RentPayment;
 use App\Models\RentSchedule;
 use App\Models\Tenancy;
@@ -38,26 +40,27 @@ class RentPaymentController extends Controller
                 'tenancy.propertyUnit.project:id,name',
                 'payments',
                 'depositDeductions.reconciliation',
+                'lateFeeAssessments',
+                'contactLogs',
             ])
             ->whereHas('tenancy', fn ($query) => $query->whereIn('organization_id', $organizationIds)->whereIn('status', ['active', 'completed']))
             ->whereNotIn('status', ['paid', 'written_off'])
             ->orderBy('due_on')
             ->limit(500)
             ->get()
-            ->map(function (RentSchedule $schedule) use ($submittableOrganizationIds): array {
+            ->map(function (RentSchedule $schedule) use ($submittableOrganizationIds, $reviewableOrganizationIds): array {
                 $paidCents = $schedule->payments
                     ->where('status', 'approved')
                     ->sum(fn (RentPayment $payment): int => Money::toMinorUnits($payment->pivot->amount));
                 $pendingCents = $schedule->payments
                     ->where('status', 'pending')
                     ->sum(fn (RentPayment $payment): int => Money::toMinorUnits($payment->pivot->amount));
-                $deductedCents = $schedule->depositDeductions
-                    ->filter(fn ($deduction): bool => in_array($deduction->reconciliation->status, ['finalized', 'refunded'], true))
-                    ->sum(fn ($deduction): int => Money::toMinorUnits($deduction->amount));
-                $amountDueCents = max(0, Money::toMinorUnits($schedule->amount_due) - $deductedCents);
+                $lateFeeCents = $schedule->lateFeeCents();
+                $amountDueCents = $schedule->totalDueCents();
                 $arrearsCents = $schedule->due_on->lt(today())
                     ? max(0, $amountDueCents - $paidCents)
                     : 0;
+                $lastContact = $schedule->contactLogs->sortByDesc('created_at')->first();
 
                 return [
                     'id' => $schedule->id,
@@ -67,6 +70,8 @@ class RentPaymentController extends Controller
                     'category' => $schedule->category,
                     'chargeName' => $schedule->charge_name_snapshot,
                     'dueOn' => $schedule->due_on->toDateString(),
+                    'baseAmountDue' => $schedule->amount_due,
+                    'lateFeeAmount' => Money::fromMinorUnits($lateFeeCents),
                     'amountDue' => Money::fromMinorUnits($amountDueCents),
                     'amountPaid' => Money::fromMinorUnits($paidCents),
                     'pendingAmount' => Money::fromMinorUnits($pendingCents),
@@ -74,6 +79,10 @@ class RentPaymentController extends Controller
                     'availableAmount' => Money::fromMinorUnits(max(0, $amountDueCents - $paidCents - $pendingCents)),
                     'currency' => $schedule->tenancy->organization->currency,
                     'canSubmit' => in_array($schedule->tenancy->organization_id, $submittableOrganizationIds, true),
+                    'canNotify' => in_array($schedule->tenancy->organization_id, $reviewableOrganizationIds, true),
+                    'contactCount' => $schedule->contactLogs->count(),
+                    'lastContactAt' => $lastContact?->created_at?->toIso8601String(),
+                    'lastContactChannel' => $lastContact?->channel,
                 ];
             })
             ->filter(fn (array $schedule): bool => Money::toMinorUnits($schedule['availableAmount']) > 0
@@ -112,6 +121,75 @@ class RentPaymentController extends Controller
             'canSubmit' => $user->hasPermission('rent_payments.submit'),
             'canReview' => $user->hasPermission('rent_payments.review'),
         ]);
+    }
+
+    public function assessLateFees(Request $request, LateFeeAssessmentService $service): RedirectResponse
+    {
+        $user = $request->user();
+        abort_unless($user->hasPermission('rent_payments.review'), 403);
+        $organizationIds = Organization::accessibleIdsFor($user, 'rent_payments.review');
+        $count = $service->assess($organizationIds);
+
+        return redirect()->route('rent-payments.index')->with(
+            'success',
+            $count === 0 ? 'No late fees were due for assessment.' : "{$count} late fee(s) assessed.",
+        );
+    }
+
+    public function storeContactLog(Request $request, RentSchedule $rentSchedule): RedirectResponse
+    {
+        $user = $request->user();
+        abort_unless($user->hasPermission('rent_payments.review'), 403);
+
+        $validated = $request->validate([
+            'channel' => ['required', Rule::in(['phone', 'sms', 'email', 'whatsapp', 'in_person', 'other'])],
+            'notes' => ['required', 'string', 'max:2000'],
+        ]);
+        $tenancy = $rentSchedule->tenancy;
+        abort_unless(
+            in_array($tenancy->organization_id, Organization::accessibleIdsFor($user, 'rent_payments.review'), true),
+            404,
+        );
+        abort_unless($tenancy->status === 'active' && $rentSchedule->due_on->lt(today()), 409, 'Follow-up logs are only available for overdue charges on active tenancies.');
+        abort_unless(
+            $rentSchedule->totalDueCents() > $rentSchedule->payments()
+                ->where('rent_payments.status', 'approved')
+                ->get()
+                ->sum(fn (RentPayment $payment): int => Money::toMinorUnits($payment->pivot->amount)),
+            409,
+            'The selected rent charge has no outstanding balance.',
+        );
+
+        DB::transaction(function () use ($request, $user, $tenancy, $rentSchedule, $validated): void {
+            $lockedTenancy = Tenancy::query()->lockForUpdate()->findOrFail($tenancy->id);
+            $schedule = RentSchedule::query()->lockForUpdate()->findOrFail($rentSchedule->id);
+            abort_unless($lockedTenancy->status === 'active' && $schedule->tenancy_id === $lockedTenancy->id, 409);
+
+            $contact = RentContactLog::create([
+                'organization_id' => $lockedTenancy->organization_id,
+                'tenancy_id' => $lockedTenancy->id,
+                'rent_schedule_id' => $schedule->id,
+                'contacted_by_user_id' => $user->id,
+                'channel' => $validated['channel'],
+                'notes' => $validated['notes'],
+            ]);
+            AuditLog::create([
+                'organization_id' => $lockedTenancy->organization_id,
+                'user_id' => $user->id,
+                'action' => 'rent_arrears.contact_logged',
+                'subject_type' => RentSchedule::class,
+                'subject_id' => $schedule->id,
+                'metadata' => [
+                    'contact_log_id' => $contact->id,
+                    'channel' => $contact->channel,
+                    'notes' => $contact->notes,
+                ],
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+        });
+
+        return redirect()->route('rent-payments.index')->with('success', 'Tenant follow-up recorded.');
     }
 
     public function store(Request $request): RedirectResponse
@@ -165,6 +243,7 @@ class RentPaymentController extends Controller
                     ->pluck('rent_payment_allocations.amount');
                 $reservedCents = $allocatedAmounts->sum(fn (string $amount): int => Money::toMinorUnits($amount));
                 $outstandingCents = Money::toMinorUnits($lockedSchedule->amount_due)
+                    + $lockedSchedule->lateFeeCents()
                     - $lockedSchedule->reconciledDepositDeductionCents()
                     - $reservedCents;
                 $paymentCents = Money::toMinorUnits($validated['amount']);

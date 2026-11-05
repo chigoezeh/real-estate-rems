@@ -2,9 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Domain\Services\LateFeeAssessmentService;
 use App\Domain\Services\RentPaymentService;
 use App\Models\Client;
 use App\Models\OrganizationChargeType;
+use App\Models\OrganizationLatePaymentPolicy;
 use App\Models\Project;
 use App\Models\PropertyUnit;
 use App\Models\RentPayment;
@@ -24,6 +26,127 @@ use Tests\TestCase;
 class RentManagementTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_non_recurring_late_payment_policy_requires_a_single_occurrence(): void
+    {
+        $owner = $this->installOwner();
+        $organization = $owner->organizations()->firstOrFail();
+        $policy = [
+            'organization_id' => $organization->id,
+            'name' => 'Late rent',
+            'grace_period_days' => '3',
+            'calculation_method' => 'fixed',
+            'amount' => '25.00',
+            'maximum_occurrences' => '2',
+            'maximum_fee_amount' => '',
+            'applies_to' => ['rent'],
+        ];
+
+        $this->actingAs($owner)
+            ->from(route('late-payment-policies.index', absolute: false))
+            ->post(route('late-payment-policies.store', absolute: false), $policy)
+            ->assertSessionHasErrors('maximum_occurrences');
+
+        $this->actingAs($owner)
+            ->post(route('late-payment-policies.store', absolute: false), [
+                ...$policy,
+                'name' => 'Single late fee',
+                'maximum_occurrences' => '1',
+            ])
+            ->assertRedirect(route('late-payment-policies.index', absolute: false));
+
+        $this->assertDatabaseHas('organization_late_payment_policies', [
+            'organization_id' => $organization->id,
+            'name' => 'Single late fee',
+            'recurrence_interval_days' => null,
+            'maximum_occurrences' => 1,
+        ]);
+    }
+
+    public function test_late_fees_respect_grace_recurrence_cap_and_rent_payment_ledger(): void
+    {
+        $owner = $this->installOwner();
+        $organization = $owner->organizations()->firstOrFail();
+        $client = $this->createVerifiedClient($owner, $organization->id);
+        $property = $this->createRentableProperty($organization->id);
+        $tenancy = $this->createActiveTenancy($owner, $organization->id, $client, $property);
+        $schedule = $this->createSchedule($tenancy, 'rent', '1000.00');
+        $schedule->update(['due_on' => today()->subDays(10)->toDateString()]);
+        $policy = OrganizationLatePaymentPolicy::create([
+            'organization_id' => $organization->id,
+            'name' => 'Rent arrears policy',
+            'grace_period_days' => 5,
+            'calculation_method' => 'percentage',
+            'amount' => '2.50',
+            'recurrence_interval_days' => 5,
+            'maximum_occurrences' => 3,
+            'maximum_fee_amount' => '40.00',
+            'applies_to' => ['rent'],
+            'is_active' => true,
+        ]);
+        $service = app(LateFeeAssessmentService::class);
+
+        $this->assertSame(1, $service->assess([$organization->id]));
+        $this->assertSame(0, $service->assess([$organization->id]));
+        $this->assertSame(1, $service->assess([$organization->id], today()->addDays(5)));
+        $this->assertSame(0, $service->assess([$organization->id], today()->addDays(10)));
+
+        $this->assertSame(2, $schedule->lateFeeAssessments()->count());
+        $this->assertSame('40.00', Money::fromMinorUnits($schedule->lateFeeCents()));
+        $this->assertSame('15.00', $schedule->lateFeeAssessments()->orderByDesc('occurrence')->firstOrFail()->amount);
+        $this->assertSame($policy->id, $schedule->lateFeeAssessments()->firstOrFail()->policy_snapshot['policy_id']);
+
+        $payment = $this->createPayment($organization->id, $tenancy->id, '1040.00', 'RENT-WITH-LATE-FEES');
+        app(RentPaymentService::class)->review($payment, $owner, 'approved', allocations: [
+            $schedule->id => '1040.00',
+        ]);
+        $this->assertSame('paid', $schedule->fresh()->status);
+        $this->assertDatabaseHas('audit_logs', [
+            'organization_id' => $organization->id,
+            'action' => 'late_fee.assessed',
+            'subject_id' => $schedule->id,
+        ]);
+
+        $this->actingAs($owner)
+            ->get(route('rent-payments.index', absolute: false))
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('schedules', [])
+                ->where('payments.0.status', 'approved'));
+    }
+
+    public function test_rent_arrears_contact_attempts_are_logged_and_scoped(): void
+    {
+        $owner = $this->installOwner();
+        $organization = $owner->organizations()->firstOrFail();
+        $client = $this->createVerifiedClient($owner, $organization->id);
+        $property = $this->createRentableProperty($organization->id);
+        $tenancy = $this->createActiveTenancy($owner, $organization->id, $client, $property);
+        $schedule = $this->createSchedule($tenancy, 'rent', '1000.00');
+        $schedule->update(['due_on' => today()->subDay()->toDateString()]);
+
+        $this->actingAs($owner)->post(route('rent-schedules.contact-logs.store', $schedule, absolute: false), [
+            'channel' => 'whatsapp',
+            'notes' => 'Tenant advised they will pay on Friday.',
+        ])->assertRedirect(route('rent-payments.index', absolute: false));
+
+        $this->assertDatabaseHas('rent_contact_logs', [
+            'organization_id' => $organization->id,
+            'tenancy_id' => $tenancy->id,
+            'rent_schedule_id' => $schedule->id,
+            'contacted_by_user_id' => $owner->id,
+            'channel' => 'whatsapp',
+        ]);
+        $this->assertDatabaseHas('audit_logs', [
+            'organization_id' => $organization->id,
+            'action' => 'rent_arrears.contact_logged',
+            'subject_id' => $schedule->id,
+        ]);
+        $this->actingAs($owner)
+            ->get(route('rent-payments.index', absolute: false))
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('schedules.0.contactCount', 1)
+                ->where('schedules.0.lastContactChannel', 'whatsapp'));
+    }
 
     public function test_approved_rent_payments_are_allocated_once_and_cannot_overpay_a_charge(): void
     {

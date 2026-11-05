@@ -1,5 +1,5 @@
 import { Link, usePage } from '@inertiajs/react';
-import { BadgeDollarSign, Building2, Boxes, CalendarDays, ChevronDown, FileUser, KeyRound, LayoutDashboard, LogOut, MapPinned, Network, ReceiptText, Users, WalletCards } from 'lucide-react';
+import { BadgeDollarSign, BellRing, Building2, Boxes, CalendarDays, ChevronDown, FileUser, KeyRound, LayoutDashboard, LogOut, MapPinned, Network, ReceiptText, Users, WalletCards } from 'lucide-react';
 import { PropsWithChildren, ReactNode } from 'react';
 import { PageProps } from '@/types';
 
@@ -19,7 +19,8 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
     const isRentPayments = route().current('rent-payments.*');
     const isMaintenance = route().current('maintenance.*');
     const isCharges = route().current('charges.*');
-    const sectionName = isDashboard ? 'Overview' : isInventory ? 'Inventory' : isInspections ? 'Inspections' : isPayments ? 'Payments' : isRentPayments ? 'Rent payments' : isTenancies ? 'Tenancies' : isMaintenance ? 'Maintenance' : isCharges ? 'Charge policies' : isSubscriptions ? 'Subscriptions' : isClients ? 'Clients' : isRoles ? 'Access & roles' : isStaff ? 'Staff' : isOrganizations ? 'Companies' : 'Profile';
+    const isLatePaymentPolicies = route().current('late-payment-policies.*');
+    const sectionName = isDashboard ? 'Overview' : isInventory ? 'Inventory' : isInspections ? 'Inspections' : isPayments ? 'Payments' : isRentPayments ? 'Rent payments' : isTenancies ? 'Tenancies' : isMaintenance ? 'Maintenance' : isLatePaymentPolicies ? 'Late-payment policies' : isCharges ? 'Charge policies' : isSubscriptions ? 'Subscriptions' : isClients ? 'Clients' : isRoles ? 'Access & roles' : isStaff ? 'Staff' : isOrganizations ? 'Companies' : 'Profile';
 
     return (
         <div className="min-h-screen bg-[#f3f5ef] lg:flex">
@@ -81,9 +82,14 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
                         </Link>
                     )}
                     {auth.canManageCharges && (
-                        <Link href={route('charges.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isCharges ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
-                            <ReceiptText size={17} /> Charge policies
-                        </Link>
+                        <>
+                            <Link href={route('charges.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isCharges ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                                <ReceiptText size={17} /> Charge policies
+                            </Link>
+                            <Link href={route('late-payment-policies.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isLatePaymentPolicies ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                                <BellRing size={17} /> Late-payment policies
+                            </Link>
+                        </>
                     )}
                     {auth.canViewInspections && (
                         <Link href={route('inspections.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isInspections ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>

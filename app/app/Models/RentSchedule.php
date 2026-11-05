@@ -54,12 +54,50 @@ class RentSchedule extends Model
         return $this->hasMany(TenancyDepositDeduction::class);
     }
 
+    /** @return HasMany<LateFeeAssessment, $this> */
+    public function lateFeeAssessments(): HasMany
+    {
+        return $this->hasMany(LateFeeAssessment::class);
+    }
+
+    /** @return HasMany<RentContactLog, $this> */
+    public function contactLogs(): HasMany
+    {
+        return $this->hasMany(RentContactLog::class);
+    }
+
+    public function lateFeeCents(): int
+    {
+        $assessments = $this->relationLoaded('lateFeeAssessments')
+            ? $this->lateFeeAssessments
+            : $this->lateFeeAssessments()->get(['amount']);
+
+        return $assessments->sum(fn (LateFeeAssessment $assessment): int => Money::toMinorUnits($assessment->amount));
+    }
+
     public function reconciledDepositDeductionCents(): int
     {
-        return $this->depositDeductions()
-            ->whereHas('reconciliation', fn ($query) => $query->whereIn('status', ['finalized', 'refunded']))
-            ->pluck('amount')
-            ->sum(fn (string $amount): int => Money::toMinorUnits($amount));
+        $deductions = $this->relationLoaded('depositDeductions')
+            ? $this->depositDeductions->filter(fn (TenancyDepositDeduction $deduction): bool => in_array(
+                $deduction->reconciliation->status,
+                ['finalized', 'refunded'],
+                true,
+            ))
+            : $this->depositDeductions()
+                ->whereHas('reconciliation', fn ($query) => $query->whereIn('status', ['finalized', 'refunded']))
+                ->get(['amount']);
+
+        return $deductions->sum(fn (TenancyDepositDeduction $deduction): int => Money::toMinorUnits($deduction->amount));
+    }
+
+    public function totalDueCents(): int
+    {
+        return max(
+            0,
+            Money::toMinorUnits($this->amount_due)
+                + $this->lateFeeCents()
+                - $this->reconciledDepositDeductionCents(),
+        );
     }
 
     /** @return array<string, string> */

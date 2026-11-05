@@ -125,8 +125,7 @@ class RentPaymentService
         foreach ($allocationCents as $scheduleId => $amountCents) {
             $schedule = $schedules->get($scheduleId);
             $alreadyAllocatedCents = $this->reservedAllocationCents($scheduleId, $payment->id);
-            $netAmountDueCents = Money::toMinorUnits($schedule->amount_due)
-                - $schedule->reconciledDepositDeductionCents();
+            $netAmountDueCents = $schedule->totalDueCents();
 
             abort_unless(
                 $alreadyAllocatedCents + $amountCents <= $netAmountDueCents,
@@ -148,8 +147,7 @@ class RentPaymentService
 
             $schedule = $schedules->get($scheduleId);
             $paidCents = $this->approvedAllocationCents($scheduleId) + $amountCents;
-            $netAmountDueCents = Money::toMinorUnits($schedule->amount_due)
-                - $schedule->reconciledDepositDeductionCents();
+            $netAmountDueCents = $schedule->totalDueCents();
             $schedule->update([
                 'status' => $paidCents >= $netAmountDueCents
                     ? 'paid'

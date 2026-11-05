@@ -16,6 +16,7 @@ use App\Http\Controllers\StaffController;
 use App\Http\Controllers\SubscriptionController;
 use App\Http\Controllers\TenancyController;
 use App\Http\Controllers\TenancyLifecycleController;
+use App\Http\Controllers\LatePaymentPolicyController;
 use App\Models\AuditLog;
 use App\Models\InstallationState;
 use App\Models\Organization;
@@ -74,6 +75,8 @@ Route::middleware('auth')->group(function () {
     Route::patch('/tenancy-deposit-reconciliations/{reconciliation}/refund', [TenancyLifecycleController::class, 'recordDepositRefund'])->name('tenancies.deposit-reconciliation.refund');
     Route::get('/rent-payments', [RentPaymentController::class, 'index'])->name('rent-payments.index');
     Route::post('/rent-payments', [RentPaymentController::class, 'store'])->name('rent-payments.store');
+    Route::post('/rent-payments/late-fees/assess', [RentPaymentController::class, 'assessLateFees'])->name('rent-payments.late-fees.assess');
+    Route::post('/rent-schedules/{rentSchedule}/contact-logs', [RentPaymentController::class, 'storeContactLog'])->name('rent-schedules.contact-logs.store');
     Route::patch('/rent-payments/{rentPayment}/review', [RentPaymentController::class, 'review'])->name('rent-payments.review');
     Route::get('/rent-payments/{rentPayment}/proof', [RentPaymentController::class, 'downloadProof'])->name('rent-payments.proof');
     Route::get('/maintenance', [MaintenanceController::class, 'index'])->name('maintenance.index');
@@ -84,6 +87,9 @@ Route::middleware('auth')->group(function () {
     Route::get('/charges', [ChargeController::class, 'index'])->name('charges.index');
     Route::post('/charges', [ChargeController::class, 'store'])->name('charges.store');
     Route::put('/charges/{organizationChargeType}', [ChargeController::class, 'update'])->name('charges.update');
+    Route::get('/late-payment-policies', [LatePaymentPolicyController::class, 'index'])->name('late-payment-policies.index');
+    Route::post('/late-payment-policies', [LatePaymentPolicyController::class, 'store'])->name('late-payment-policies.store');
+    Route::put('/late-payment-policies/{policy}', [LatePaymentPolicyController::class, 'update'])->name('late-payment-policies.update');
     Route::get('/payments', [PaymentController::class, 'index'])->name('payments.index');
     Route::post('/payments', [PaymentController::class, 'store'])->name('payments.store');
     Route::patch('/payments/{payment}/review', [PaymentController::class, 'review'])->name('payments.review');
