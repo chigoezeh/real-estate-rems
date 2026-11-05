@@ -31,7 +31,7 @@ class RentPaymentController extends Controller
 
         $schedules = RentSchedule::query()
             ->with(['tenancy.organization:id,currency', 'tenancy.tenant:id,full_name', 'tenancy.propertyUnit:id,project_id,phase,block,code', 'tenancy.propertyUnit.project:id,name', 'payments'])
-            ->whereHas('tenancy', fn ($query) => $query->whereIn('organization_id', $organizationIds)->where('status', 'active'))
+            ->whereHas('tenancy', fn ($query) => $query->whereIn('organization_id', $organizationIds)->whereIn('status', ['active', 'completed']))
             ->where('status', '!=', 'paid')
             ->orderBy('due_on')
             ->limit(500)
@@ -136,7 +136,7 @@ class RentPaymentController extends Controller
             DB::transaction(function () use ($request, $user, $validated, $schedule, $proofPath): void {
                 $lockedSchedule = RentSchedule::query()->lockForUpdate()->findOrFail($schedule->id);
                 $tenancy = $lockedSchedule->tenancy()->lockForUpdate()->firstOrFail();
-                abort_unless($tenancy->status === 'active', 409, 'Rent can only be collected for an active tenancy.');
+                abort_unless(in_array($tenancy->status, ['active', 'completed'], true), 409, 'Rent can only be collected for active or completed tenancy charges.');
 
                 $allocatedAmounts = DB::table('rent_payment_allocations')
                     ->join('rent_payments', 'rent_payments.id', '=', 'rent_payment_allocations.rent_payment_id')

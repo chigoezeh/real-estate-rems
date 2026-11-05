@@ -136,6 +136,83 @@ class RentManagementTest extends TestCase
         );
     }
 
+    public function test_renewal_is_a_separate_linked_draft_and_completes_the_prior_term_on_activation(): void
+    {
+        $owner = $this->installOwner();
+        $organization = $owner->organizations()->firstOrFail();
+        $client = $this->createVerifiedClient($owner, $organization->id);
+        $property = $this->createRentableProperty($organization->id);
+        $tenancy = $this->createActiveTenancy($owner, $organization->id, $client, $property);
+        $currentEnd = today()->addDays(30);
+        $tenancy->update(['ends_on' => $currentEnd->toDateString()]);
+        $property->update(['rental_status' => 'occupied']);
+        $renewalStart = $currentEnd->copy()->addDay();
+        $renewalEnd = $renewalStart->copy()->addYearNoOverflow()->subDay();
+        $renewalData = [
+            'client_id' => $client->id,
+            'property_unit_id' => $property->id,
+            'renewal_of_tenancy_id' => $tenancy->id,
+            'starts_on' => $renewalStart->toDateString(),
+            'ends_on' => $renewalEnd->toDateString(),
+            'rent_frequency' => 'annual',
+            'rent_amount' => '1200.00',
+            'security_deposit' => '200.00',
+            'service_charge' => '75.00',
+        ];
+
+        $this->actingAs($owner)
+            ->get(route('tenancies.index', absolute: false))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Tenancies/Index')
+                ->has('tenancies', 1)
+                ->where('tenancies.0.renewal.startsOn', $renewalStart->toDateString())
+                ->where('tenancies.0.renewal.endsOn', $renewalEnd->toDateString())
+                ->where('tenancies.0.renewal.property.id', $property->id));
+
+        $this->actingAs($owner)->post(route('tenancies.store', absolute: false), [
+            ...$renewalData,
+            'starts_on' => $renewalStart->copy()->addDay()->toDateString(),
+        ])->assertStatus(422);
+
+        $this->actingAs($owner)->post(route('tenancies.store', absolute: false), $renewalData)
+            ->assertRedirect(route('tenancies.index', absolute: false));
+
+        $renewal = Tenancy::query()->where('renewal_of_tenancy_id', $tenancy->id)->firstOrFail();
+        $this->assertSame('draft', $renewal->status);
+        $this->assertSame($tenancy->id, $renewal->renewalOf->id);
+        $this->assertSame('1000.00', $tenancy->fresh()->rent_amount);
+        $this->assertSame('occupied', $property->fresh()->rental_status);
+        $this->assertDatabaseHas('audit_logs', [
+            'organization_id' => $organization->id,
+            'action' => 'tenancy.renewal_drafted',
+            'subject_id' => $renewal->id,
+        ]);
+        $this->actingAs($owner)
+            ->get(route('tenancies.index', absolute: false))
+            ->assertInertia(fn (Assert $page) => $page->where('tenancies.0.renewal', null));
+
+        $this->actingAs($owner)->post(route('tenancies.store', absolute: false), $renewalData)
+            ->assertStatus(409);
+
+        $this->actingAs($owner)->patch(route('tenancies.activate', $renewal, absolute: false))
+            ->assertStatus(409);
+
+        $this->travelTo($renewalStart);
+        $this->actingAs($owner)->patch(route('tenancies.activate', $renewal, absolute: false))
+            ->assertRedirect(route('tenancies.index', absolute: false));
+
+        $this->assertSame('completed', $tenancy->fresh()->status);
+        $this->assertSame('active', $renewal->fresh()->status);
+        $this->assertSame(1, $renewal->rentSchedules()->where('category', 'rent')->count());
+        $this->assertSame('occupied', $property->fresh()->rental_status);
+        $this->assertDatabaseHas('audit_logs', [
+            'organization_id' => $organization->id,
+            'action' => 'tenancy.renewed',
+            'subject_id' => $tenancy->id,
+        ]);
+    }
+
     public function test_rental_charge_policies_are_snapshotted_and_generate_recurring_or_one_time_schedules(): void
     {
         $owner = $this->installOwner();
@@ -257,6 +334,37 @@ class RentManagementTest extends TestCase
                 ->where('schedules.0.amountPaid', '40.00')
                 ->where('schedules.0.pendingAmount', '60.00')
                 ->where('schedules.0.arrearsAmount', '60.00')
+                ->where('schedules.0.availableAmount', '0.00'));
+    }
+
+    public function test_completed_tenancy_charges_remain_visible_and_payable(): void
+    {
+        Storage::fake('local');
+        $owner = $this->installOwner();
+        $organization = $owner->organizations()->firstOrFail();
+        $client = $this->createVerifiedClient($owner, $organization->id);
+        $property = $this->createRentableProperty($organization->id);
+        $tenancy = $this->createActiveTenancy($owner, $organization->id, $client, $property);
+        $tenancy->update(['status' => 'completed']);
+        $schedule = $this->createSchedule($tenancy, 'rent', '100.00');
+        $schedule->update(['due_on' => today()->subDay()->toDateString()]);
+
+        $this->actingAs($owner)->post(route('rent-payments.store', absolute: false), [
+            'rent_schedule_id' => $schedule->id,
+            'amount' => '100.00',
+            'payment_channel' => 'bank_transfer',
+            'transaction_reference' => 'COMPLETED-TENANCY-001',
+            'proof_document' => UploadedFile::fake()->create('payment.pdf', 12, 'application/pdf'),
+        ])->assertRedirect(route('rent-payments.index', absolute: false));
+
+        $this->actingAs($owner)
+            ->get(route('rent-payments.index', absolute: false))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('RentPayments/Index')
+                ->has('schedules', 1)
+                ->where('schedules.0.arrearsAmount', '100.00')
+                ->where('schedules.0.pendingAmount', '100.00')
                 ->where('schedules.0.availableAmount', '0.00'));
     }
 

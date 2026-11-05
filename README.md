@@ -15,7 +15,7 @@ The Laravel application is in [`app/`](app/). The implementation includes:
 - Login, a company-aware dashboard, and a responsive React/Inertia admin shell
 - MySQL as the default database connection
 
-The property and operations workflows include normalized geography, project/unit inventory, title records, client KYC, inspection bookings, subscriptions and installment payments, approved property allocation, company-configured charge policies, rental tenancies and rent payments, and maintenance requests/work orders. Allocation requires reconciled full payment, verified property-level title, and authorized inventory approval. Extended tenancy lifecycle, commissions, notifications, and reporting remain planned. The HTML files in the repository root are early sketches, not application entrypoints.
+The property and operations workflows include normalized geography, project/unit inventory, title records, client KYC, inspection bookings, subscriptions and installment payments, approved property allocation, company-configured charge policies, rental tenancies and rent payments, linked tenancy renewal drafts, and maintenance requests/work orders. Allocation requires reconciled full payment, verified property-level title, and authorized inventory approval. Tenancy notices, terminations, deposit reconciliation, configurable late-payment policies, commissions, notifications, and reporting remain planned. The HTML files in the repository root are early sketches, not application entrypoints.
 
 ## Requirements
 

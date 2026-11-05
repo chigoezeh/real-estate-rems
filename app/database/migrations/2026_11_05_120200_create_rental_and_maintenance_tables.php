@@ -23,7 +23,7 @@ return new class extends Migration
             $table->json('rules')->nullable();
             $table->timestamps();
             $table->unique(['organization_id', 'name']);
-            $table->index(['organization_id', 'category', 'is_active']);
+            $table->index(['organization_id', 'category', 'is_active'], 'charge_types_org_category_active_idx');
         });
 
         Schema::create('tenancies', function (Blueprint $table) {
@@ -130,7 +130,7 @@ return new class extends Migration
             $table->timestamp('completed_at')->nullable();
             $table->text('completion_notes')->nullable();
             $table->timestamps();
-            $table->index(['organization_id', 'status', 'scheduled_at']);
+            $table->index(['organization_id', 'status', 'scheduled_at'], 'work_orders_org_status_scheduled_idx');
             $table->index(['maintenance_request_id', 'status']);
         });
     }

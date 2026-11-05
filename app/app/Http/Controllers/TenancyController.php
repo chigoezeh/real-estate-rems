@@ -42,30 +42,70 @@ class TenancyController extends Controller
         $chargesByOrganization = $this->chargePolicyService
             ->activeForOrganizations($manageableOrganizationIds, 'rentals')
             ->groupBy('organization_id');
+        $chargePoliciesForOrganization = fn (string $organizationId): array => $chargesByOrganization
+            ->get($organizationId, collect())
+            ->map(fn (OrganizationChargeType $charge): array => $this->policyForClient($charge))
+            ->values()
+            ->all();
 
         return Inertia::render('Tenancies/Index', [
             'tenancies' => Tenancy::query()
-                ->with(['organization:id,currency', 'tenant:id,full_name,phone', 'propertyUnit:id,project_id,phase,block,code', 'propertyUnit.project:id,name'])
+                ->with([
+                    'organization:id,currency',
+                    'tenant:id,full_name,phone',
+                    'propertyUnit:id,project_id,phase,block,code,unit_type,area_sqm',
+                    'propertyUnit.project:id,name',
+                    'renewalOf:id,tenancy_number',
+                ])
+                ->withCount(['renewals as draft_renewals_count' => fn ($query) => $query->where('status', 'draft')])
                 ->whereIn('organization_id', $organizationIds)
                 ->latest()
                 ->limit(200)
                 ->get()
-                ->map(fn (Tenancy $tenancy): array => [
-                    'id' => $tenancy->id,
-                    'number' => $tenancy->tenancy_number,
-                    'status' => $tenancy->status,
-                    'tenantName' => $tenancy->tenant->full_name,
-                    'tenantPhone' => $tenancy->tenant->phone,
-                    'property' => $tenancy->propertyUnit->project->name.' · '.trim($tenancy->propertyUnit->phase.' '.$tenancy->propertyUnit->block.' '.$tenancy->propertyUnit->code),
-                    'startsOn' => $tenancy->starts_on->toDateString(),
-                    'endsOn' => $tenancy->ends_on?->toDateString(),
-                    'frequency' => $tenancy->rent_frequency,
-                    'rentAmount' => $tenancy->rent_amount,
-                    'additionalChargesTotal' => $this->tenancyChargeTotal($tenancy),
-                    'additionalCharges' => $tenancy->terms_snapshot['charges'] ?? [],
-                    'currency' => $tenancy->organization->currency,
-                    'canManage' => in_array($tenancy->organization_id, $manageableOrganizationIds, true),
-                ])
+                ->map(function (Tenancy $tenancy) use ($manageableOrganizationIds, $chargePoliciesForOrganization): array {
+                    $canManageTenancy = in_array($tenancy->organization_id, $manageableOrganizationIds, true);
+                    $renewalStartsOn = $tenancy->ends_on?->copy()->addDay();
+                    $canRenew = $canManageTenancy
+                        && $tenancy->status === 'active'
+                        && $renewalStartsOn !== null
+                        && $tenancy->ends_on->gte(today())
+                        && $tenancy->draft_renewals_count === 0;
+
+                    return [
+                        'id' => $tenancy->id,
+                        'number' => $tenancy->tenancy_number,
+                        'status' => $tenancy->status,
+                        'tenantName' => $tenancy->tenant->full_name,
+                        'tenantPhone' => $tenancy->tenant->phone,
+                        'property' => $tenancy->propertyUnit->project->name.' · '.trim($tenancy->propertyUnit->phase.' '.$tenancy->propertyUnit->block.' '.$tenancy->propertyUnit->code),
+                        'startsOn' => $tenancy->starts_on->toDateString(),
+                        'endsOn' => $tenancy->ends_on?->toDateString(),
+                        'frequency' => $tenancy->rent_frequency,
+                        'rentAmount' => $tenancy->rent_amount,
+                        'securityDeposit' => $tenancy->security_deposit,
+                        'serviceCharge' => $tenancy->service_charge,
+                        'additionalChargesTotal' => $this->tenancyChargeTotal($tenancy),
+                        'additionalCharges' => $tenancy->terms_snapshot['charges'] ?? [],
+                        'currency' => $tenancy->organization->currency,
+                        'renewalOfNumber' => $tenancy->renewalOf?->tenancy_number,
+                        'renewal' => $canRenew ? [
+                            'clientId' => $tenancy->tenant_client_id,
+                            'startsOn' => $renewalStartsOn->toDateString(),
+                            'endsOn' => $renewalStartsOn->copy()->addYearNoOverflow()->subDay()->toDateString(),
+                            'property' => [
+                                'id' => $tenancy->propertyUnit->id,
+                                'organizationId' => $tenancy->organization_id,
+                                'projectName' => $tenancy->propertyUnit->project->name,
+                                'currency' => $tenancy->organization->currency,
+                                'label' => trim($tenancy->propertyUnit->phase.' '.$tenancy->propertyUnit->block.' '.$tenancy->propertyUnit->code),
+                                'unitType' => $tenancy->propertyUnit->unit_type,
+                                'areaSqm' => $tenancy->propertyUnit->area_sqm,
+                                'chargePolicies' => $chargePoliciesForOrganization($tenancy->organization_id),
+                            ],
+                        ] : null,
+                        'canManage' => $canManageTenancy,
+                    ];
+                })
                 ->values(),
             'clients' => Client::query()
                 ->whereIn('organization_id', $manageableOrganizationIds)
@@ -94,10 +134,7 @@ class TenancyController extends Controller
                     'label' => trim($property->phase.' '.$property->block.' '.$property->code),
                     'unitType' => $property->unit_type,
                     'areaSqm' => $property->area_sqm,
-                    'chargePolicies' => $chargesByOrganization
-                        ->get($property->project->organization_id, collect())
-                        ->map(fn (OrganizationChargeType $charge): array => $this->policyForClient($charge))
-                        ->values(),
+                    'chargePolicies' => $chargePoliciesForOrganization($property->project->organization_id),
                 ])
                 ->values(),
             'canManage' => $user->hasPermission('tenancies.manage'),
@@ -118,13 +155,29 @@ class TenancyController extends Controller
             'rent_amount' => ['required', 'numeric', 'gt:0', 'decimal:0,2'],
             'security_deposit' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:9999999999999.99', 'decimal:0,2'],
             'service_charge' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:9999999999999.99', 'decimal:0,2'],
+            'renewal_of_tenancy_id' => ['nullable', 'uuid', 'exists:tenancies,id'],
         ]);
 
         $property = PropertyUnit::query()->with('project')->findOrFail($validated['property_unit_id']);
         $client = Client::query()->findOrFail($validated['client_id']);
-        $organizationId = $property->project->organization_id;
+        $renewalOfTenancyId = $validated['renewal_of_tenancy_id'] ?? null;
+        $renewalOfTenancy = $renewalOfTenancyId
+            ? Tenancy::query()->findOrFail($renewalOfTenancyId)
+            : null;
+        $organizationId = $renewalOfTenancy?->organization_id ?? $property->project->organization_id;
         abort_unless(in_array($organizationId, Organization::accessibleIdsFor($user, 'tenancies.manage'), true), 404);
+        abort_unless($property->project->organization_id === $organizationId, 404);
         abort_unless($client->organization_id === $organizationId, 404);
+        if ($renewalOfTenancy !== null) {
+            $this->assertRenewalSource(
+                $renewalOfTenancy,
+                $organizationId,
+                $property->id,
+                $client->id,
+                $validated['starts_on'],
+            );
+            abort_unless($renewalOfTenancy->ends_on->gte(today()), 422, 'A renewal draft must be created before the current term ends.');
+        }
         abort_unless($client->kyc_status === 'verified', 422, 'Verified client KYC is required before creating a tenancy.');
         abort_unless(
             Carbon::parse($validated['starts_on'])->addMonthsNoOverflow(60)->gte(Carbon::parse($validated['ends_on'])),
@@ -132,9 +185,29 @@ class TenancyController extends Controller
             'The initial tenancy term cannot exceed five years.',
         );
 
-        $tenancy = DB::transaction(function () use ($request, $user, $validated, $property, $organizationId): Tenancy {
+        $tenancy = DB::transaction(function () use ($request, $user, $validated, $property, $organizationId, $renewalOfTenancyId): Tenancy {
+            $lockedRenewal = $renewalOfTenancyId
+                ? Tenancy::query()->lockForUpdate()->findOrFail($renewalOfTenancyId)
+                : null;
             $lockedProperty = PropertyUnit::query()->lockForUpdate()->findOrFail($property->id);
-            abort_unless($lockedProperty->status === 'available' && $lockedProperty->rental_status === 'available', 409, 'This property is not listed as available for rent.');
+            if ($lockedRenewal !== null) {
+                $this->assertRenewalSource(
+                    $lockedRenewal,
+                    $organizationId,
+                    $lockedProperty->id,
+                    $validated['client_id'],
+                    $validated['starts_on'],
+                );
+                abort_unless($lockedRenewal->ends_on->gte(today()), 409, 'The current tenancy term has ended; create a new tenancy instead.');
+                abort_unless(! $lockedRenewal->renewals()->where('status', 'draft')->exists(), 409, 'A renewal draft already exists for this tenancy.');
+                abort_unless(
+                    $lockedProperty->status === 'available' && $lockedProperty->rental_status === 'occupied',
+                    409,
+                    'The property is no longer occupied by the tenancy being renewed.',
+                );
+            } else {
+                abort_unless($lockedProperty->status === 'available' && $lockedProperty->rental_status === 'available', 409, 'This property is not listed as available for rent.');
+            }
 
             $policies = $this->chargePolicyService->activeForOrganizations([$organizationId], 'rentals', true);
             $quotes = $this->chargePolicyService->validateQuotes($request->input('charge_quotes'), $policies);
@@ -189,6 +262,7 @@ class TenancyController extends Controller
                 'property_unit_id' => $lockedProperty->id,
                 'tenant_client_id' => $validated['client_id'],
                 'created_by_user_id' => $user->id,
+                'renewal_of_tenancy_id' => $lockedRenewal?->id,
                 'tenancy_number' => 'TEN-'.now()->format('Y').'-'.Str::upper(Str::random(8)),
                 'status' => 'draft',
                 'starts_on' => $validated['starts_on'],
@@ -206,12 +280,25 @@ class TenancyController extends Controller
                 ],
             ]);
 
-            $this->audit($request, $user, $tenancy, 'tenancy.created', ['status' => 'draft']);
+            $this->audit(
+                $request,
+                $user,
+                $tenancy,
+                $lockedRenewal ? 'tenancy.renewal_drafted' : 'tenancy.created',
+                [
+                    'status' => 'draft',
+                    'renewal_of_tenancy_id' => $lockedRenewal?->id,
+                ],
+            );
 
             return $tenancy;
         });
 
-        return redirect()->route('tenancies.index')->with('success', "Tenancy {$tenancy->tenancy_number} was created as a draft.");
+        $message = $renewalOfTenancyId
+            ? "Renewal for tenancy {$renewalOfTenancy?->tenancy_number} was saved as a draft."
+            : "Tenancy {$tenancy->tenancy_number} was created as a draft.";
+
+        return redirect()->route('tenancies.index')->with('success', $message);
     }
 
     public function activate(Request $request, Tenancy $tenancy): RedirectResponse
@@ -224,13 +311,42 @@ class TenancyController extends Controller
             $lockedTenancy = Tenancy::query()->lockForUpdate()->findOrFail($tenancy->id);
             abort_unless($lockedTenancy->status === 'draft', 409, 'Only draft tenancies can be activated.');
 
+            $renewalSource = $lockedTenancy->renewal_of_tenancy_id
+                ? Tenancy::query()->lockForUpdate()->findOrFail($lockedTenancy->renewal_of_tenancy_id)
+                : null;
+            if ($renewalSource !== null) {
+                $this->assertRenewalSource(
+                    $renewalSource,
+                    $lockedTenancy->organization_id,
+                    $lockedTenancy->property_unit_id,
+                    $lockedTenancy->tenant_client_id,
+                    $lockedTenancy->starts_on->toDateString(),
+                );
+                abort_unless(
+                    $lockedTenancy->starts_on->lte(today()) && $lockedTenancy->ends_on?->gte(today()),
+                    409,
+                    'A renewal can only be activated during its new tenancy term.',
+                );
+            }
+
             $property = PropertyUnit::query()->lockForUpdate()->findOrFail($lockedTenancy->property_unit_id);
-            abort_unless($property->status === 'available' && $property->rental_status === 'available', 409, 'This property is no longer available for rent.');
+            if ($renewalSource !== null) {
+                abort_unless($property->status === 'available' && $property->rental_status === 'occupied', 409, 'The property is no longer occupied by the tenancy being renewed.');
+            } else {
+                abort_unless($property->status === 'available' && $property->rental_status === 'available', 409, 'This property is no longer available for rent.');
+            }
             $this->ensureNoActiveOverlap($lockedTenancy);
             $this->createRentSchedules($lockedTenancy);
 
             $lockedTenancy->update(['status' => 'active']);
-            $property->update(['rental_status' => 'occupied']);
+            if ($renewalSource !== null) {
+                $renewalSource->update(['status' => 'completed']);
+                $this->audit($request, $user, $renewalSource, 'tenancy.renewed', [
+                    'renewed_by_tenancy_id' => $lockedTenancy->id,
+                ]);
+            } else {
+                $property->update(['rental_status' => 'occupied']);
+            }
             $this->audit($request, $user, $lockedTenancy, 'tenancy.activated', [
                 'starts_on' => $lockedTenancy->starts_on->toDateString(),
                 'ends_on' => $lockedTenancy->ends_on?->toDateString(),
@@ -253,6 +369,29 @@ class TenancyController extends Controller
             ->exists();
 
         abort_unless(! $overlapExists, 409, 'This property already has an active tenancy during the selected dates.');
+    }
+
+    private function assertRenewalSource(
+        Tenancy $source,
+        string $organizationId,
+        string $propertyUnitId,
+        string $clientId,
+        string $startsOn,
+    ): void {
+        abort_unless(
+            $source->status === 'active'
+                && $source->ends_on !== null
+                && $source->organization_id === $organizationId
+                && $source->property_unit_id === $propertyUnitId
+                && $source->tenant_client_id === $clientId,
+            422,
+            'A renewal must retain the active tenancy’s organization, property, and tenant.',
+        );
+        abort_unless(
+            $startsOn === $source->ends_on->copy()->addDay()->toDateString(),
+            422,
+            'A renewal must start the day after the current tenancy ends.',
+        );
     }
 
     private function createRentSchedules(Tenancy $tenancy): void

@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'property_unit_id',
     'tenant_client_id',
     'created_by_user_id',
+    'renewal_of_tenancy_id',
     'tenancy_number',
     'status',
     'starts_on',
@@ -46,6 +47,18 @@ class Tenancy extends Model
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Client::class, 'tenant_client_id');
+    }
+
+    /** @return BelongsTo<Tenancy, $this> */
+    public function renewalOf(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'renewal_of_tenancy_id');
+    }
+
+    /** @return HasMany<Tenancy, $this> */
+    public function renewals(): HasMany
+    {
+        return $this->hasMany(self::class, 'renewal_of_tenancy_id');
     }
 
     /** @return HasMany<RentSchedule, $this> */

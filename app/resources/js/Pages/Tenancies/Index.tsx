@@ -34,14 +34,19 @@ type Tenancy = {
     endsOn: string | null;
     frequency: string;
     rentAmount: string;
+    securityDeposit: string;
+    serviceCharge: string;
     additionalChargesTotal: string;
     additionalCharges: Array<{ name: string; total_amount: string }>;
     currency: string;
+    renewalOfNumber: string | null;
+    renewal: { clientId: string; startsOn: string; endsOn: string; property: Property } | null;
     canManage: boolean;
 };
 type FormData = {
     client_id: string;
     property_unit_id: string;
+    renewal_of_tenancy_id: string;
     starts_on: string;
     ends_on: string;
     rent_frequency: string;
@@ -55,6 +60,7 @@ type Props = { tenancies: Tenancy[]; clients: Client[]; properties: Property[]; 
 const emptyForm = (): FormData => ({
     client_id: '',
     property_unit_id: '',
+    renewal_of_tenancy_id: '',
     starts_on: '',
     ends_on: '',
     rent_frequency: 'monthly',
@@ -72,8 +78,10 @@ const formatMoney = (amount: string, currency: string) => new Intl.NumberFormat(
 
 export default function Index({ tenancies, clients, properties, canManage }: Props) {
     const [isAdding, setIsAdding] = useState(false);
+    const [renewalSource, setRenewalSource] = useState<Tenancy | null>(null);
     const form = useForm<FormData>(emptyForm());
-    const selectedProperty = properties.find((property) => property.id === form.data.property_unit_id);
+    const selectedProperty = properties.find((property) => property.id === form.data.property_unit_id)
+        ?? renewalSource?.renewal?.property;
     const activeChargePolicies = selectedProperty?.chargePolicies ?? [];
     const availableClients = useMemo(
         () => clients.filter((client) => client.organizationId === selectedProperty?.organizationId),
@@ -84,6 +92,7 @@ export default function Index({ tenancies, clients, properties, canManage }: Pro
 
     const openForm = () => {
         form.clearErrors();
+        setRenewalSource(null);
         form.setData({
             ...emptyForm(),
             property_unit_id: properties[0]?.id ?? '',
@@ -92,9 +101,33 @@ export default function Index({ tenancies, clients, properties, canManage }: Pro
         setIsAdding(true);
     };
 
+    const openRenewal = (tenancy: Tenancy) => {
+        if (!tenancy.renewal) return;
+        form.clearErrors();
+        setRenewalSource(tenancy);
+        form.setData({
+            ...emptyForm(),
+            client_id: tenancy.renewal.clientId,
+            property_unit_id: tenancy.renewal.property.id,
+            renewal_of_tenancy_id: tenancy.id,
+            starts_on: tenancy.renewal.startsOn,
+            ends_on: tenancy.renewal.endsOn,
+            rent_frequency: tenancy.frequency,
+            rent_amount: tenancy.rentAmount,
+            security_deposit: tenancy.securityDeposit,
+            service_charge: tenancy.serviceCharge,
+        });
+        setIsAdding(true);
+    };
+
     const submit: FormEventHandler = (event) => {
         event.preventDefault();
-        form.post(route('tenancies.store'), { onSuccess: () => setIsAdding(false) });
+        form.post(route('tenancies.store'), {
+            onSuccess: () => {
+                setIsAdding(false);
+                setRenewalSource(null);
+            },
+        });
     };
 
     return (
@@ -116,9 +149,11 @@ export default function Index({ tenancies, clients, properties, canManage }: Pro
 
                 {isAdding && (
                     <form onSubmit={submit} className="space-y-5 border border-[#dfe5df] bg-white p-5 sm:p-7">
-                        <div className="flex items-start justify-between gap-4"><div><p className="eyebrow">New agreement</p><h2 className="mt-1 font-display text-xl text-[#18342c]">Tenancy details</h2></div><button type="button" onClick={() => setIsAdding(false)} aria-label="Close form" className="grid size-9 place-items-center rounded-lg text-[#6d7d76] hover:bg-[#f1f4ef]"><X size={18} /></button></div>
+                        <div className="flex items-start justify-between gap-4"><div><p className="eyebrow">{renewalSource ? 'Renewal draft' : 'New agreement'}</p><h2 className="mt-1 font-display text-xl text-[#18342c]">{renewalSource ? `Renew ${renewalSource.number}` : 'Tenancy details'}</h2></div><button type="button" onClick={() => { setIsAdding(false); setRenewalSource(null); }} aria-label="Close form" className="grid size-9 place-items-center rounded-lg text-[#6d7d76] hover:bg-[#f1f4ef]"><X size={18} /></button></div>
                         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                            <Field label="Property" id="tenancy-property">
+                            {renewalSource ? (
+                                <div><p className="field-label">Property</p><p className="mt-2 text-sm text-[#29483e]">{renewalSource.property}</p></div>
+                            ) : <Field label="Property" id="tenancy-property">
                                 <select id="tenancy-property" required value={form.data.property_unit_id} onChange={(event) => {
                                     const property = properties.find((item) => item.id === event.target.value);
                                     form.setData((current) => ({
@@ -132,14 +167,16 @@ export default function Index({ tenancies, clients, properties, canManage }: Pro
                                     {properties.map((property) => <option key={property.id} value={property.id}>{property.projectName} · {property.label} ({property.unitType})</option>)}
                                 </select>
                                 <InputError message={form.errors.property_unit_id} className="mt-2" />
-                            </Field>
-                            <Field label="Verified tenant" id="tenancy-client">
+                            </Field>}
+                            {renewalSource ? (
+                                <div><p className="field-label">Tenant</p><p className="mt-2 text-sm text-[#29483e]">{renewalSource.tenantName} · {renewalSource.tenantPhone}</p></div>
+                            ) : <Field label="Verified tenant" id="tenancy-client">
                                 <select id="tenancy-client" required value={form.data.client_id} onChange={(event) => form.setData('client_id', event.target.value)} className="field-input">
                                     <option value="">Select a tenant</option>
                                     {availableClients.map((client) => <option key={client.id} value={client.id}>{client.name} · {client.phone}</option>)}
                                 </select>
                                 <InputError message={form.errors.client_id} className="mt-2" />
-                            </Field>
+                            </Field>}
                             <Field label="Rent frequency" id="tenancy-frequency">
                                 <select id="tenancy-frequency" value={form.data.rent_frequency} onChange={(event) => form.setData('rent_frequency', event.target.value)} className="field-input">
                                     <option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="semi_annual">Semi-annual</option><option value="annual">Annual</option>
@@ -182,8 +219,8 @@ export default function Index({ tenancies, clients, properties, canManage }: Pro
                             {Object.entries(form.errors).filter(([key]) => key.startsWith('charge_quotes.')).map(([key, message]) => <InputError key={key} message={message} />)}
                             {form.errors.charge_quotes && <InputError message={form.errors.charge_quotes} />}
                         </fieldset>
-                        <p className="text-xs leading-5 text-[#76857e]">The agreement is saved as a draft. Activating it checks for overlapping tenancies and creates the scheduled rent charges.</p>
-                        <div className="flex justify-end"><button type="submit" disabled={form.processing || !selectedProperty || availableClients.length === 0} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#17352d] px-4 text-sm font-semibold text-white hover:bg-[#244b40] disabled:opacity-50">{form.processing ? 'Saving…' : 'Save draft'}</button></div>
+                        <p className="text-xs leading-5 text-[#76857e]">{renewalSource ? 'The renewal is a separate agreement draft linked to the current tenancy. Existing terms and rent charges remain unchanged; activation is available during the new term.' : 'The agreement is saved as a draft. Activating it checks for overlapping tenancies and creates the scheduled rent charges.'}</p>
+                        <div className="flex justify-end"><button type="submit" disabled={form.processing || !selectedProperty || availableClients.length === 0} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#17352d] px-4 text-sm font-semibold text-white hover:bg-[#244b40] disabled:opacity-50">{form.processing ? 'Saving…' : renewalSource ? 'Save renewal draft' : 'Save draft'}</button></div>
                     </form>
                 )}
 
@@ -192,13 +229,13 @@ export default function Index({ tenancies, clients, properties, canManage }: Pro
                         <thead className="bg-[#f8faf6] text-[11px] font-semibold uppercase tracking-[0.12em] text-[#77857f]"><tr><th className="px-5 py-3">Tenancy</th><th className="px-5 py-3">Tenant</th><th className="px-5 py-3">Property</th><th className="px-5 py-3">Term</th><th className="px-5 py-3 text-right">Rent</th><th className="px-5 py-3">Status</th><th className="px-5 py-3" /></tr></thead>
                         <tbody className="divide-y divide-[#edf0ec]">
                             {tenancies.map((tenancy) => <tr key={tenancy.id}>
-                                <td className="px-5 py-4"><p className="text-sm font-semibold text-[#233c33]">{tenancy.number}</p><p className="mt-1 text-xs capitalize text-[#7b8983]">{tenancy.frequency.replaceAll('_', ' ')}</p></td>
+                                <td className="px-5 py-4"><p className="text-sm font-semibold text-[#233c33]">{tenancy.number}</p><p className="mt-1 text-xs capitalize text-[#7b8983]">{tenancy.frequency.replaceAll('_', ' ')}</p>{tenancy.renewalOfNumber && <p className="mt-1 text-xs text-[#7b8983]">Renewal of {tenancy.renewalOfNumber}</p>}</td>
                                 <td className="px-5 py-4"><p className="text-sm font-medium text-[#29483e]">{tenancy.tenantName}</p><p className="mt-1 text-xs text-[#7b8983]">{tenancy.tenantPhone}</p></td>
                                 <td className="px-5 py-4 text-sm text-[#4c6259]">{tenancy.property}</td>
                                 <td className="px-5 py-4 text-sm text-[#4c6259]">{tenancy.startsOn} – {tenancy.endsOn ?? 'Open ended'}</td>
                                 <td className="px-5 py-4 text-right text-sm font-medium text-[#29483e]">{formatMoney(tenancy.rentAmount, tenancy.currency)}{tenancy.additionalCharges.length > 0 && <p className="mt-1 text-xs font-normal text-[#7b8983]" title={tenancy.additionalCharges.map((charge) => charge.name).join(', ')}>Charges {formatMoney(tenancy.additionalChargesTotal, tenancy.currency)} · {tenancy.additionalCharges.map((charge) => charge.name).join(', ')}</p>}</td>
-                                <td className="px-5 py-4"><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${tenancy.status === 'active' ? 'bg-[#edf4eb] text-[#315447]' : 'bg-[#f8f2dc] text-[#756128]'}`}>{tenancy.status.replaceAll('_', ' ')}</span></td>
-                                <td className="px-5 py-4 text-right">{canManage && tenancy.canManage && tenancy.status === 'draft' && <button type="button" onClick={() => router.patch(route('tenancies.activate', tenancy.id), {}, { preserveScroll: true })} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#17352d] px-3 text-xs font-semibold text-white hover:bg-[#244b40]"><Check size={14} /> Activate</button>}</td>
+                                <td className="px-5 py-4"><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${tenancy.status === 'active' ? 'bg-[#edf4eb] text-[#315447]' : tenancy.status === 'completed' ? 'bg-[#e9edf0] text-[#465860]' : 'bg-[#f8f2dc] text-[#756128]'}`}>{tenancy.status.replaceAll('_', ' ')}</span></td>
+                                <td className="px-5 py-4 text-right"><div className="flex justify-end gap-2">{canManage && tenancy.canManage && tenancy.status === 'draft' && <button type="button" onClick={() => router.patch(route('tenancies.activate', tenancy.id), {}, { preserveScroll: true })} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#17352d] px-3 text-xs font-semibold text-white hover:bg-[#244b40]"><Check size={14} /> Activate</button>}{canManage && tenancy.canManage && tenancy.renewal && <button type="button" onClick={() => openRenewal(tenancy)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#d9e1d9] px-3 text-xs font-semibold text-[#315447] hover:bg-[#f1f4ef]"><CalendarDays size={14} /> Draft renewal</button>}</div></td>
                             </tr>)}
                             {tenancies.length === 0 && <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-[#718078]">No tenancies have been created yet.</td></tr>}
                         </tbody>
