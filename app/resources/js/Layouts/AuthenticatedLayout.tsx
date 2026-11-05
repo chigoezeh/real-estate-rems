@@ -1,5 +1,5 @@
 import { Link, usePage } from '@inertiajs/react';
-import { BadgeDollarSign, Building2, Boxes, ChevronDown, FileUser, KeyRound, LayoutDashboard, LogOut, Network, ReceiptText, Users } from 'lucide-react';
+import { BadgeDollarSign, Building2, Boxes, CalendarDays, ChevronDown, FileUser, KeyRound, LayoutDashboard, LogOut, MapPinned, Network, ReceiptText, Users } from 'lucide-react';
 import { PropsWithChildren, ReactNode } from 'react';
 import { PageProps } from '@/types';
 
@@ -14,7 +14,8 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
     const isClients = route().current('clients.*');
     const isSubscriptions = route().current('subscriptions.*');
     const isPayments = route().current('payments.*');
-    const sectionName = isDashboard ? 'Overview' : isInventory ? 'Inventory' : isPayments ? 'Payments' : isSubscriptions ? 'Subscriptions' : isClients ? 'Clients' : isRoles ? 'Access & roles' : isStaff ? 'Staff' : isOrganizations ? 'Companies' : 'Profile';
+    const isInspections = route().current('inspections.*');
+    const sectionName = isDashboard ? 'Overview' : isInventory ? 'Inventory' : isInspections ? 'Inspections' : isPayments ? 'Payments' : isSubscriptions ? 'Subscriptions' : isClients ? 'Clients' : isRoles ? 'Access & roles' : isStaff ? 'Staff' : isOrganizations ? 'Companies' : 'Profile';
 
     return (
         <div className="min-h-screen bg-[#f3f5ef] lg:flex">
@@ -58,6 +59,11 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
                     {auth.canViewPayments && (
                         <Link href={route('payments.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isPayments ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
                             <ReceiptText size={17} /> Payments
+                        </Link>
+                    )}
+                    {auth.canViewInspections && (
+                        <Link href={route('inspections.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isInspections ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                            <MapPinned size={17} /> Site inspections
                         </Link>
                     )}
                     {auth.canManageUsers && (

@@ -90,6 +90,8 @@ class SetupController extends Controller
                 'payments.view' => 'View payment ledger',
                 'payments.submit' => 'Submit payment records and proof',
                 'payments.review' => 'Approve or reject submitted payments',
+                'inspections.view' => 'View site inspection bookings',
+                'inspections.manage' => 'Schedule and manage site inspections',
             ];
 
             $permissionIds = [];

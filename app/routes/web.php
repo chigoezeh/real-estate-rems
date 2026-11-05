@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\ClientController;
+use App\Http\Controllers\InspectionController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\OrganizationController;
 use App\Http\Controllers\PaymentController;
@@ -52,6 +53,9 @@ Route::get('/dashboard', function () {
 })->middleware('auth')->name('dashboard');
 
 Route::middleware('auth')->group(function () {
+    Route::get('/inspections', [InspectionController::class, 'index'])->name('inspections.index');
+    Route::post('/inspections', [InspectionController::class, 'store'])->name('inspections.store');
+    Route::patch('/inspections/{inspection}', [InspectionController::class, 'update'])->name('inspections.update');
     Route::get('/payments', [PaymentController::class, 'index'])->name('payments.index');
     Route::post('/payments', [PaymentController::class, 'store'])->name('payments.store');
     Route::patch('/payments/{payment}/review', [PaymentController::class, 'review'])->name('payments.review');

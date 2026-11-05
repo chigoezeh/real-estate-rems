@@ -20,6 +20,7 @@ export type PageProps<
         canViewClients: boolean;
         canViewSubscriptions: boolean;
         canViewPayments: boolean;
+            canViewInspections: boolean;
     };
     company: CompanySummary | null;
 };
