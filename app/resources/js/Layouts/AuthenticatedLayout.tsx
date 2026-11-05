@@ -1,5 +1,5 @@
 import { Link, usePage } from '@inertiajs/react';
-import { Building2, Boxes, ChevronDown, KeyRound, LayoutDashboard, LogOut, Network, Users } from 'lucide-react';
+import { BadgeDollarSign, Building2, Boxes, ChevronDown, FileUser, KeyRound, LayoutDashboard, LogOut, Network, ReceiptText, Users } from 'lucide-react';
 import { PropsWithChildren, ReactNode } from 'react';
 import { PageProps } from '@/types';
 
@@ -11,7 +11,10 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
     const isRoles = route().current('roles.*');
     const isStaff = route().current('staff.*');
     const isInventory = route().current('inventory.*') || route().current('projects.*');
-    const sectionName = isDashboard ? 'Overview' : isInventory ? 'Inventory' : isRoles ? 'Access & roles' : isStaff ? 'Staff' : isOrganizations ? 'Companies' : 'Profile';
+    const isClients = route().current('clients.*');
+    const isSubscriptions = route().current('subscriptions.*');
+    const isPayments = route().current('payments.*');
+    const sectionName = isDashboard ? 'Overview' : isInventory ? 'Inventory' : isPayments ? 'Payments' : isSubscriptions ? 'Subscriptions' : isClients ? 'Clients' : isRoles ? 'Access & roles' : isStaff ? 'Staff' : isOrganizations ? 'Companies' : 'Profile';
 
     return (
         <div className="min-h-screen bg-[#f3f5ef] lg:flex">
@@ -40,6 +43,21 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
                     {auth.canViewInventory && (
                         <Link href={route('inventory.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isInventory ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
                             <Boxes size={17} /> Inventory
+                        </Link>
+                    )}
+                    {auth.canViewClients && (
+                        <Link href={route('clients.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isClients ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                            <FileUser size={17} /> Clients
+                        </Link>
+                    )}
+                    {auth.canViewSubscriptions && (
+                        <Link href={route('subscriptions.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isSubscriptions ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                            <BadgeDollarSign size={17} /> Subscriptions
+                        </Link>
+                    )}
+                    {auth.canViewPayments && (
+                        <Link href={route('payments.index')} className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition ${isPayments ? 'bg-white/10 font-medium text-white' : 'text-white/70 hover:bg-white/8 hover:text-white'}`}>
+                            <ReceiptText size={17} /> Payments
                         </Link>
                     )}
                     {auth.canManageUsers && (

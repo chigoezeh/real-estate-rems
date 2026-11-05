@@ -1,11 +1,14 @@
 <?php
 
-use App\Http\Controllers\OrganizationController;
+use App\Http\Controllers\ClientController;
 use App\Http\Controllers\InventoryController;
+use App\Http\Controllers\OrganizationController;
+use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\RoleController;
 use App\Http\Controllers\SetupController;
 use App\Http\Controllers\StaffController;
+use App\Http\Controllers\SubscriptionController;
 use App\Models\AuditLog;
 use App\Models\InstallationState;
 use App\Models\Organization;
@@ -49,6 +52,16 @@ Route::get('/dashboard', function () {
 })->middleware('auth')->name('dashboard');
 
 Route::middleware('auth')->group(function () {
+    Route::get('/payments', [PaymentController::class, 'index'])->name('payments.index');
+    Route::post('/payments', [PaymentController::class, 'store'])->name('payments.store');
+    Route::patch('/payments/{payment}/review', [PaymentController::class, 'review'])->name('payments.review');
+    Route::get('/payments/{payment}/proof', [PaymentController::class, 'downloadProof'])->name('payments.proof');
+    Route::get('/subscriptions', [SubscriptionController::class, 'index'])->name('subscriptions.index');
+    Route::post('/subscriptions', [SubscriptionController::class, 'store'])->name('subscriptions.store');
+    Route::get('/clients', [ClientController::class, 'index'])->name('clients.index');
+    Route::post('/clients', [ClientController::class, 'store'])->name('clients.store');
+    Route::patch('/clients/{client}/kyc', [ClientController::class, 'reviewKyc'])->name('clients.kyc.review');
+    Route::get('/clients/{client}/identity-document', [ClientController::class, 'downloadIdentityDocument'])->name('clients.identity-document');
     Route::get('/inventory', [InventoryController::class, 'index'])->name('inventory.index');
     Route::post('/projects', [InventoryController::class, 'storeProject'])->name('projects.store');
     Route::put('/projects/{project}', [InventoryController::class, 'updateProject'])->name('projects.update');

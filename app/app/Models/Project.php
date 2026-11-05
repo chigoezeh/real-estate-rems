@@ -25,6 +25,12 @@ class Project extends Model
         return $this->hasMany(PropertyUnit::class);
     }
 
+    /** @return HasMany<Subscription, $this> */
+    public function subscriptions(): HasMany
+    {
+        return $this->hasMany(Subscription::class);
+    }
+
     /** @return array<string, string> */
     protected function casts(): array
     {

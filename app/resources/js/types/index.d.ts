@@ -17,6 +17,9 @@ export type PageProps<
         user: User;
         canManageUsers: boolean;
         canViewInventory: boolean;
+        canViewClients: boolean;
+        canViewSubscriptions: boolean;
+        canViewPayments: boolean;
     };
     company: CompanySummary | null;
 };
